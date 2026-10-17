@@ -137,7 +137,7 @@ def test_tool_rejects_long_period_without_spending(tmp_path: Path) -> None:
 
 
 def test_station_lookups_are_capped_and_reported(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    import agent.tools as tools_module
+    import agent.tools.common as tools_module
 
     monkeypatch.setattr(tools_module, "MAX_POI_LOOKUPS", 1)
     txs = [fill(1, "azs-msk", "ДТ", 10, "600", "600"), fill(2, "azs-tver", "ДТ", 10, "600", "600")]

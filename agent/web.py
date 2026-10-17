@@ -14,14 +14,16 @@ import json
 import os
 import re
 import time
+from collections.abc import Mapping
 from datetime import date
 from html import escape
+from typing import Any, cast
 
 from apisdkopti24 import APIClient, ConnectionSettings, EnvironmentCredentialsProvider
 
 from .config import Mode, Settings
-from .core import FuelCardAgent
 from .contract import is_production, open_session, preferred_contract_id
+from .core import FuelCardAgent
 from .dashboard import Dashboard, collect
 from .safety import BillingBudget
 
@@ -72,7 +74,7 @@ def _number(text: object) -> float:
         return 0.0
 
 
-def _kv(title: str, data: dict[str, object]) -> str:
+def _kv(title: str, data: Mapping[str, object]) -> str:
     rows = "".join(
         f"<dt>{escape(k)}</dt><dd>{escape(str(v))}</dd>"
         for k, v in data.items()
@@ -197,7 +199,7 @@ def _control(control: dict[str, object]) -> str:
     cls = ' class="warn"' if suspicious else ""
     items = "".join(
         f"<li>{escape(str(i['date']))} · {escape(str(i['sum']))} · {escape('; '.join(i['reasons']))}</li>"
-        for i in control["Примеры"]  # type: ignore[union-attr]
+        for i in cast("list[dict[str, Any]]", control["Примеры"])
     )
     return (
         '<section class="card wide"><h2>Контроль заправок</h2>'

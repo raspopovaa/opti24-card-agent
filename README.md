@@ -16,6 +16,7 @@ python -m agent.dashboard    # только дашборд договора, б�
 python -m agent              # дашборд + диалог в терминале
 python scripts/smoke_test.py # проверка на настоящем API (DEMO), без модели
 pytest                       # 125 тестов без сети и без ключей
+ruff check agent scripts evals tests && mypy agent  # проверки качества кода, их же запускает CI
 python scripts/estimate_cost.py
 python evals/run_evals.py --runs 3  # оценка агента: инструменты и их аргументы (нужен ключ модели)
 ```
@@ -42,7 +43,7 @@ python -m agent.web   # http://localhost:8765, данные DEMO
 | Часть | Что это | Где в коде |
 |---|---|---|
 | Цель и правила | Системная инструкция | `agent/prompt.py` |
-| Руки | Инструменты: функции над SDK | `agent/tools.py` |
+| Руки | Инструменты: функции над SDK, по темам | `agent/tools/` |
 | Цикл | Tool Runner из SDK Anthropic | `agent/core.py` |
 | Мозг | Модель: Claude по умолчанию, другие провайдеры на выбор (раздел 7) | `agent/config.py`, `agent/providers.py` |
 | Предохранители | Подтверждение, бюджет запросов, журнал | `agent/safety.py` |
@@ -58,7 +59,7 @@ python -m agent.web   # http://localhost:8765, данные DEMO
                Claude (Haiku 5.5) ◄──────────────┐
                      │ tool_use                  │ tool_result (короткий JSON)
                      ▼                           │
-               tools.py ── BillingBudget ── ApprovalGate (для block_cards)
+               tools/ ── BillingBudget ── ApprovalGate (для block_cards)
                      │
                      ▼
                apisdkopti24 ──► API Opti24 (DEMO или рабочий)

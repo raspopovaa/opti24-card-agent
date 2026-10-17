@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 
 import pytest
+
 from agent.analysis import find_anomalies, summarize
 from agent.config import Mode
 from agent.money import rub, to_decimal
@@ -867,8 +868,9 @@ def test_dashboard_collects_kpis_and_reports_truncation() -> None:
 def test_dashboard_survives_api_error() -> None:
     from datetime import date
 
-    from agent.dashboard import collect
     from apisdkopti24 import APIError
+
+    from agent.dashboard import collect
 
     client = fake_full_client([])
 
@@ -1015,8 +1017,9 @@ def test_openai_loop_stops_at_iteration_limit(tmp_path: Path) -> None:
 
 
 def test_open_session_picks_contract_from_error(tmp_path: Path) -> None:
-    from agent.contract import open_session
     from apisdkopti24.errors import ContractSelectionError
+
+    from agent.contract import open_session
 
     calls: list[str | None] = []
 
@@ -1036,16 +1039,18 @@ def test_open_session_picks_contract_from_error(tmp_path: Path) -> None:
 
 
 def test_open_session_requires_explicit_contract_on_production() -> None:
-    from agent.contract import open_session
     from apisdkopti24.errors import ContractSelectionError
+
+    from agent.contract import open_session
 
     with pytest.raises(ContractSelectionError):
         asyncio.run(open_session(NS(), preferred=None, production=True, choose=None))  # type: ignore[arg-type]
 
 
 def test_open_session_without_terminal_lists_contracts() -> None:
-    from agent.contract import open_session
     from apisdkopti24.errors import ContractSelectionError
+
+    from agent.contract import open_session
 
     async def auth_user(**_: object) -> NS:
         raise ContractSelectionError("x", available_contracts=(("id1", "№1"),))

@@ -1,0 +1,117 @@
+"""Общие константы и помощники инструментов агента."""
+
+from __future__ import annotations
+
+import json
+from datetime import date, datetime
+from typing import Any
+
+from apisdkopti24 import APIClient, APIError
+
+from ..money import rub, to_decimal
+from ..safety import BillingBudget
+
+MAX_LIST = 25
+# Бесплатный пакет запросов API в месяц по текущему тарифу; после него API блокируется.
+# Пакет зависит от договора, поэтому значение настраивается (OPTI24_MONTHLY_QUOTA).
+DEFAULT_MONTHLY_QUOTA = 500
+QUOTA_WARNING_LEFT = 50
+# Регион АЗС ищется отдельным бесплатным запросом на каждую АЗС; при лимите SDK
+# 1 запрос в секунду больше 40 АЗС за вопрос — слишком долгое ожидание.
+MAX_POI_LOOKUPS = 40
+
+
+def _json(payload: object) -> str:
+    return json.dumps(payload, ensure_ascii=False, default=str)
+
+
+class TransactionsUnavailableError(Exception):
+    """Стенд не отдаёт операции (на DEMO get_transactions_v2 отвечает HTTP 405)."""
+
+
+def _error(exc: Exception) -> str:
+    # Текст исключений SDK очищен от секретов, но всё равно ограничиваем длину.
+    return _json({"error": type(exc).__name__, "message": str(exc)[:300]})
+
+
+def _rub_optional(value: float | int | str | None) -> str | None:
+    """Сумма или None: не показываем «0 ₽» там, где API вернул null."""
+    if value is None or value == "":
+        return None
+    return rub(to_decimal(value))
+
+
+def _iso(value: object) -> str:
+    return value.isoformat() if isinstance(value, datetime) else str(value)
+
+
+def _doc_date(value: int | str) -> str:
+    """Дата документа: UNIX timestamp или строка."""
+    try:
+        return datetime.fromtimestamp(int(value)).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OSError):
+        return str(value)
+
+
+def _check_dates(date_from: str, date_to: str) -> str | None:
+    try:
+        start, end = date.fromisoformat(date_from), date.fromisoformat(date_to)
+    except ValueError:
+        return "Даты нужны в формате ГГГГ-ММ-ДД."
+    if end < start:
+        return "Дата окончания раньше даты начала."
+    if (end - start).days > 31:
+        return "Период не больше месяца: разбей запрос на части."
+    return None
+
+
+async def load_transactions(
+    client: APIClient,
+    budget: BillingBudget,
+    date_from: str,
+    date_to: str,
+    card_id: str | None = None,
+    max_pages: int | None = None,
+) -> tuple[list[Any], int]:
+    """Операции за период и их общее число; страница из 100 операций — один платный запрос.
+
+    При ``max_pages`` загрузка останавливается раньше, и тогда длина списка
+    меньше общего числа: вызывающий код видит, что данные неполные.
+    """
+    items: list[Any] = []
+    offset = 0
+    pages = 0
+    total = 0
+    while True:
+        if max_pages is not None and pages >= max_pages:
+            return items, total
+        pages += 1
+        budget.spend()
+        try:
+            if card_id:
+                page = await client.transactions.get_card_transactions_v2(
+                    card_id=card_id,
+                    date_from=date_from,
+                    date_to=date_to,
+                    page_limit=100,
+                    page_offset=offset,
+                )
+            else:
+                page = await client.transactions.get_transactions_v2(
+                    date_from=date_from, date_to=date_to, page_limit=100, page_offset=offset
+                )
+        except APIError as exc:
+            if exc.http_status_code == 405:
+                budget.spent -= 1  # отклонённый запрос не считаем платным
+                raise TransactionsUnavailableError(
+                    "Сервер ответил HTTP 405: на DEMO операции не отдаются (так отвечает "
+                    "сам стенд, это видно в проверках opti24-live-check). Операции доступны "
+                    "на рабочем договоре."
+                ) from exc
+            raise
+        batch = page.data.result or []
+        items.extend(batch)
+        offset += len(batch)
+        total = page.data.total_count
+        if not batch or offset >= total:
+            return items, total

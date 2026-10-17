@@ -40,6 +40,7 @@ from apisdkopti24.models.restrictions import RestrictionRequestItem
 from .analysis import AnomalyRules, find_anomalies, summarize
 from .analysis import fuel_price_analytics as price_analytics
 from .config import Mode
+from .decline_codes import decode as decode_decline
 from .knowledge import load_sections
 from .knowledge import search as search_knowledge
 from .money import rub, to_decimal
@@ -1526,13 +1527,49 @@ def build_tools(
         if receipt["decline_text"] and re.search(r"pin|пин", receipt["decline_text"], re.IGNORECASE):
             causes.append("в чеке отказа упомянут PIN: возможно, превышено число неверных вводов")
             steps.append("Сбросить счётчик неверных вводов PIN в личном кабинете или через поддержку оператора.")
-        if not causes:
+        decoded = decode_decline(receipt["decline_code"]) if receipt["decline_code"] else None
+        if not causes and not decoded:
             causes.append("явной причины в данных карты и договора нет")
             steps.append(
                 "Повторить заправку; если отказ повторяется — позвонить в поддержку по телефону "
                 "из чека и назвать код ответа, дату, время и АЗС."
             )
 
+        checks: dict[str, dict[str, object]] = {
+            "card_status": {"ok": status_ok, "value": card.status},
+            "check_purchase": purchase,
+            "limits": {"ok": not exceeded_limits, "items": limit_rows},
+            "contract_balance": {"ok": available > 0, "value": rub(available)},
+            "region_limits": {
+                # None — запрет есть, но без АЗС из чека не видно, касается ли он заправки.
+                "ok": False
+                if denied_here or outside_allowed
+                else (None if deny_regions and not poi_id else True),
+                "station_region": station_region,
+                "deny": deny_regions,
+                "allow": allow_regions,
+            },
+            "restrictions": {
+                "ok": not deny_restrictions,
+                "deny": deny_restrictions,
+                "allow": allow_restrictions,
+            },
+            "pin_attempts": {
+                "ok": None,
+                "note": "API не показывает счётчик неверных вводов PIN; спроси водителя.",
+            },
+        }
+        if decoded:
+            # Код терминала — прямое указание причины: он идёт первым, а проверки его подтверждают.
+            causes.insert(0, f"по коду ответа {decoded['code']} из чека: {decoded['meaning']}")
+            steps.insert(0, str(decoded["action"]))
+            related = decoded["related_check"]
+            if related and checks.get(str(related), {}).get("ok") is True:
+                decoded["note"] = (
+                    "проверка, которая соответствует коду, сейчас в порядке: состояние могло "
+                    "измениться после отказа (например, счёт пополнили) — уточни время отказа"
+                )
+            receipt = {**receipt, "decoded": decoded}
         return _json(
             {
                 "card": {
@@ -1543,30 +1580,7 @@ def build_tools(
                     "available": _rub_optional(card.available),
                 },
                 "receipt": receipt,
-                "checks": {
-                    "card_status": {"ok": status_ok, "value": card.status},
-                    "check_purchase": purchase,
-                    "limits": {"ok": not exceeded_limits, "items": limit_rows},
-                    "contract_balance": {"ok": available > 0, "value": rub(available)},
-                    "region_limits": {
-                        # None — запрет есть, но без АЗС из чека не видно, касается ли он заправки.
-                        "ok": False
-                        if denied_here or outside_allowed
-                        else (None if deny_regions and not poi_id else True),
-                        "station_region": station_region,
-                        "deny": deny_regions,
-                        "allow": allow_regions,
-                    },
-                    "restrictions": {
-                        "ok": not deny_restrictions,
-                        "deny": deny_restrictions,
-                        "allow": allow_restrictions,
-                    },
-                    "pin_attempts": {
-                        "ok": None,
-                        "note": "API не показывает счётчик неверных вводов PIN; спроси водителя.",
-                    },
-                },
+                "checks": checks,
                 "likely_causes": causes,
                 "next_steps": steps,
             }

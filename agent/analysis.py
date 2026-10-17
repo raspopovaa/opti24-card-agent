@@ -192,10 +192,18 @@ class _PriceAcc:
     def client_price(self) -> Decimal | None:
         return self.paid / self.liters if self.liters else None
 
-    def payload(self) -> dict[str, object]:
+    def payload(self, fee_rate: Decimal | None = None) -> dict[str, object]:
         client = self.client_price()
         station = self.station / self.liters if self.liters else None
         benefit = self.station - self.paid
+        fee: dict[str, object] = {}
+        if fee_rate is not None:
+            fee = {
+                "service_fee": rub(self.paid * fee_rate),
+                "client_price_with_fee_per_liter": rub(client * (1 + fee_rate))
+                if client is not None
+                else None,
+            }
         return {
             "operations": self.operations,
             "liters": str(self.liters),
@@ -205,6 +213,7 @@ class _PriceAcc:
             # Положительное — скидка, отрицательное — цена выше цены АЗС (наценка в операции).
             "discount_total": rub(benefit),
             "discount_per_liter": rub(benefit / self.liters) if self.liters else None,
+            **fee,
         }
 
 
@@ -213,14 +222,20 @@ def fuel_price_analytics(
     region_of: dict[str, str],
     min_operations: int = 3,
     top: int = 10,
+    service_fee_percent: Decimal | None = None,
 ) -> dict[str, object]:
     """Цена топлива для клиента по продуктам и регионам и где заправляться дешевле.
 
-    Цена клиента — списанная сумма, делённая на литры: в неё входят скидка и
-    любые наценки, которые API провёл в самой операции. Сборы, выставленные
-    отдельно (счётом или документом), в операциях не видны и сюда не входят.
-    ``region_of`` сопоставляет ID АЗС с названием региона.
+    Цена клиента — сумма операции, делённая на литры: в неё входят скидка и
+    наценки, которые API провёл в самой операции. Сервисный сбор договора
+    (процент от каждой покупки, списывается со счёта договора) в сумме операции
+    не выделен, поэтому добавляется отдельно, если известен его процент.
+    ``region_of`` сопоставляет ID АЗС с названием региона. ``service_fee_percent`` —
+    сервисный сбор договора в процентах от стоимости покупки; если он задан, цены
+    и экономия считаются ещё и со сбором.
     """
+    fee_rate = service_fee_percent / 100 if service_fee_percent is not None else None
+    fee_factor = 1 + (fee_rate or Decimal("0"))
     purchases = _purchases(transactions)
     by_product: dict[str, _PriceAcc] = defaultdict(_PriceAcc)
     by_region: dict[str, _PriceAcc] = defaultdict(_PriceAcc)
@@ -243,7 +258,10 @@ def fuel_price_analytics(
             key=lambda row: row[1].client_price() or Decimal("0"),
         )
         matrix.append(
-            {"product": product, "regions": [{"region": r, **acc.payload()} for r, acc in rows[:top]]}
+            {
+                "product": product,
+                "regions": [{"region": r, **acc.payload(fee_rate)} for r, acc in rows[:top]],
+            }
         )
         # Сравниваем только регионы, где операций достаточно, чтобы средняя цена что-то значила.
         reliable = [(r, acc) for r, acc in rows if acc.operations >= min_operations]
@@ -252,7 +270,7 @@ def fuel_price_analytics(
         best_region, best = reliable[0]
         best_price = best.client_price() or Decimal("0")
         for region, acc in reliable[1:]:
-            diff = (acc.client_price() or Decimal("0")) - best_price
+            diff = ((acc.client_price() or Decimal("0")) - best_price) * fee_factor
             if diff <= 0:
                 continue
             saving = diff * acc.liters
@@ -262,9 +280,9 @@ def fuel_price_analytics(
                     {
                         "product": product,
                         "expensive_region": region,
-                        "expensive_price_per_liter": rub(acc.client_price() or Decimal("0")),
+                        "expensive_price_per_liter": rub((acc.client_price() or Decimal("0")) * fee_factor),
                         "cheaper_region": best_region,
-                        "cheaper_price_per_liter": rub(best_price),
+                        "cheaper_price_per_liter": rub(best_price * fee_factor),
                         "difference_per_liter": rub(diff),
                         "liters_in_expensive_region": str(acc.liters),
                         "possible_saving": rub(saving),
@@ -276,8 +294,8 @@ def fuel_price_analytics(
     regions = sorted(by_region.items(), key=lambda kv: -kv[1].liters)
     return {
         "operations": len(purchases),
-        "by_product": [{"product": p, **by_product[p].payload()} for p in by_product],
-        "by_region": [{"region": r, **acc.payload()} for r, acc in regions[:top]],
+        "by_product": [{"product": p, **by_product[p].payload(fee_rate)} for p in by_product],
+        "by_region": [{"region": r, **acc.payload(fee_rate)} for r, acc in regions[:top]],
         "regions_total": len(regions),
         "price_by_product_and_region": matrix,
         "cheaper_options": [entry for _, entry in savings[:5]],
@@ -287,7 +305,9 @@ def fuel_price_analytics(
         "method": {
             "client_price": "списанная сумма / литры: со скидкой и наценками в операции",
             "station_price": "сумма без скидки / литры",
-            "not_included": "сборы, выставленные отдельно от операций",
+            "service_fee": f"{service_fee_percent} % от стоимости покупки, цены и экономия со сбором"
+            if service_fee_percent is not None
+            else "не учтён: процент сбора не задан",
             "comparison": f"сравниваются регионы, где по топливу не меньше {min_operations} операций; "
             "possible_saving = разница цены × литры, залитые в более дорогом регионе за период",
         },

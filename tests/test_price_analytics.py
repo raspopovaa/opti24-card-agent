@@ -154,3 +154,49 @@ def test_decimal_money_has_no_float_noise() -> None:
     txs = [fill(1, "azs-msk", "ДТ", 0.1, "0.1", "0.2") for _ in range(3)]
     product = fuel_price_analytics(txs, REGIONS)["by_product"][0]  # type: ignore[index]
     assert product["client_price_per_liter"] == "1,00 ₽" and Decimal("0.3") == Decimal(product["liters"])
+
+
+def test_service_fee_tiers_follow_contract_table() -> None:
+    from agent.pricing import service_fee_for_volume, tiers_payload
+
+    assert [service_fee_for_volume(Decimal(v)) for v in ("0", "40000", "40001", "100000", "150001", "500001")] == [
+        Decimal("3.75"), Decimal("3.75"), Decimal("3"), Decimal("3"), Decimal("1.5"), Decimal("1"),
+    ]
+    assert tiers_payload()[0] == {"previous_month_volume": "0–40 000 л", "percent": "3.75"}
+    assert tiers_payload()[-1] == {"previous_month_volume": "более 500 000 л", "percent": "1"}
+
+
+def test_service_fee_is_added_on_top_of_paid_price() -> None:
+    result = fuel_price_analytics(
+        [fill(1, "azs-msk", "ДТ", 100, "6000", "6200")], REGIONS, service_fee_percent=Decimal("3.75")
+    )
+    product = result["by_product"][0]  # type: ignore[index]
+    assert product["client_price_per_liter"] == "60,00 ₽"
+    assert product["service_fee"] == "225,00 ₽"
+    assert product["client_price_with_fee_per_liter"] == "62,25 ₽"
+
+
+def test_saving_estimate_includes_service_fee() -> None:
+    txs = [fill(i, "azs-msk", "ДТ", 100, "6200", "6300") for i in range(3)]
+    txs += [fill(10 + i, "azs-tver", "ДТ", 100, "5900", "6000") for i in range(3)]
+    option = fuel_price_analytics(txs, REGIONS, service_fee_percent=Decimal("1"))["cheaper_options"][0]  # type: ignore[index]
+    assert option["difference_per_liter"] == "3,03 ₽" and option["possible_saving"] == "909,00 ₽"
+
+
+def test_tool_picks_fee_by_previous_month_or_shows_tiers(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("OPTI24_SERVICE_FEE_PERCENT", raising=False)
+    txs = [fill(1, "azs-msk", "ДТ", 100, "6000", "6000")]
+    fake, _, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, txs=txs)
+    _with_stations(fake, [])
+    period = {"date_from": "2026-09-01", "date_to": "2026-09-30"}
+    unknown = json.loads(asyncio.run(tools["fuel_price_analytics"].call(period)))
+    assert unknown["service_fee_source"] == "неизвестен" and len(unknown["service_fee_tiers"]["tiers"]) == 5
+    assert "service_fee" not in unknown["by_product"][0]
+    by_volume = json.loads(
+        asyncio.run(tools["fuel_price_analytics"].call({**period, "previous_month_liters": 120000}))
+    )
+    assert by_volume["by_product"][0]["service_fee"] == "150,00 ₽"  # 2,5 % от 6 000 ₽
+    monkeypatch.setenv("OPTI24_SERVICE_FEE_PERCENT", "1,5")
+    configured = json.loads(asyncio.run(tools["fuel_price_analytics"].call(period)))
+    assert configured["service_fee_source"] == "OPTI24_SERVICE_FEE_PERCENT"
+    assert configured["by_product"][0]["service_fee"] == "90,00 ₽"

@@ -41,6 +41,7 @@ from .analysis import AnomalyRules, find_anomalies, summarize
 from .analysis import fuel_price_analytics as price_analytics
 from .config import Mode
 from .money import rub, to_decimal
+from .pricing import TERMS_EDITION, configured_service_fee, service_fee_for_volume, tiers_payload
 from .safety import ApprovalGate, BillingBudget, BudgetExceededError
 
 MAX_LIST = 25
@@ -649,18 +650,25 @@ def build_tools(
 
     @beta_async_tool
     async def fuel_price_analytics(
-        date_from: str, date_to: str, card_id: str | None = None, product: str | None = None
+        date_from: str,
+        date_to: str,
+        card_id: str | None = None,
+        product: str | None = None,
+        service_fee_percent: float | None = None,
+        previous_month_liters: float | None = None,
     ) -> str:
-        """Цена топлива для клиента со скидкой, литры и суммы по топливу и регионам РФ, где дешевле.
+        """Цена топлива для клиента со скидкой и сервисным сбором по топливу и регионам РФ, где дешевле.
 
-        Цена клиента = списанная сумма / литры. Платно как spending_report (операции
-        кешируются); регион АЗС определяется бесплатно. Период не больше месяца.
+        Цена клиента = сумма операции / литры. Платно как spending_report (операции
+        кешируются); регион АЗС бесплатно. Период не больше месяца.
 
         Args:
             date_from: Начало периода, ГГГГ-ММ-ДД.
             date_to: Конец периода, ГГГГ-ММ-ДД.
             card_id: Ограничить одной картой (необязательно).
             product: Название топлива как в операциях, например "ДТ" (необязательно).
+            service_fee_percent: Сервисный сбор договора, % (если известен).
+            previous_month_liters: Литры за прошлый месяц: по ним выбирается ставка сбора.
         """
         if problem := _check_dates(date_from, date_to):
             return _json({"error": "bad_dates", "message": problem})
@@ -672,10 +680,23 @@ def build_tools(
             needle = product.casefold()
             items = [t for t in items if needle in (t.product_name or "").casefold()]
         region_of, unchecked = await regions_for({t.poi_id for t in items})
+        fee: Decimal | None
+        if service_fee_percent is not None:
+            fee, fee_source = to_decimal(service_fee_percent), "указан в вопросе"
+        elif (fee := configured_service_fee()) is not None:
+            fee_source = "OPTI24_SERVICE_FEE_PERCENT"
+        elif previous_month_liters is not None:
+            fee = service_fee_for_volume(to_decimal(previous_month_liters))
+            fee_source = f"ставка по объёму прошлого месяца, {TERMS_EDITION}"
+        else:
+            fee_source = "неизвестен"
         result: dict[str, object] = {
             "period": f"{date_from}…{date_to}",
-            **price_analytics(items, region_of),
+            **price_analytics(items, region_of, service_fee_percent=fee),
+            "service_fee_source": fee_source,
         }
+        if fee is None:
+            result["service_fee_tiers"] = {"terms": TERMS_EDITION, "tiers": tiers_payload()}
         if unchecked:
             result["hint"] = (
                 f"Регион не проверен у {unchecked} АЗС: за один вопрос проверяется "

@@ -19,3 +19,15 @@ jobs:
       - run: pip install -r requirements.txt pytest
       # Тесты работают на моках: ни ключей, ни сети, ни учётных данных Opti24 не нужно.
       - run: pytest -q
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # Версии линтеров закреплены, чтобы новый релиз не ломал сборку без изменений в коде.
+      - run: pip install -r requirements.txt ruff==0.17.1 mypy==2.4.0
+      - run: ruff check agent scripts evals tests
+      - run: mypy agent

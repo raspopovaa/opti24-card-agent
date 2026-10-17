@@ -1,2 +1,17 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+# F — ошибки pyflakes (неиспользуемое и неопределённое), I — порядок импортов.
+# Стиль и длину строк не проверяем: они не ловят ошибок поведения.
+select = ["F", "I"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = false

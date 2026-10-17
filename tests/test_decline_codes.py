@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from agent.decline_codes import decode
 
 

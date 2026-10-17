@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from agent.config import Mode
 from agent.knowledge import DEFAULT_DIR, load_sections, search
 from scripts.sync_knowledge import accept, check_sources

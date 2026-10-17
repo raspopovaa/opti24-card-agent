@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date
+from typing import Any, cast
 
 from apisdkopti24 import APIClient, APIError, ConnectionSettings, EnvironmentCredentialsProvider
 from rich.console import Console, Group
@@ -129,7 +131,7 @@ async def collect(
     return board
 
 
-def _kv(title: str, data: dict[str, object], style: str) -> Panel:
+def _kv(title: str, data: Mapping[str, object], style: str) -> Panel:
     table = Table.grid(padding=(0, 2))
     for key, value in data.items():
         if isinstance(value, (list, dict)):
@@ -175,7 +177,7 @@ def render(board: Dashboard, console: Console | None = None) -> None:
         style = "red" if suspicious else "green"
         lines = [f"Проверено операций: {board.control['Проверено операций']}, "
                  f"подозрительных: [{style}]{suspicious}[/]"]
-        for item in board.control["Примеры"]:  # type: ignore[union-attr]
+        for item in cast("list[dict[str, Any]]", board.control["Примеры"]):
             lines.append(f"• {item['date']}  {item['sum']}  " + "; ".join(item["reasons"]))
         console.print(Panel("\n".join(lines), title="[bold]Контроль заправок[/]", border_style=style))
 

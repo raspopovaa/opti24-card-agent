@@ -38,11 +38,19 @@ from apisdkopti24.models.region_limits import RegionLimitRequestItem
 from apisdkopti24.models.restrictions import RestrictionRequestItem
 
 from .analysis import AnomalyRules, find_anomalies, summarize
+from .analysis import fuel_price_analytics as price_analytics
 from .config import Mode
 from .money import rub, to_decimal
 from .safety import ApprovalGate, BillingBudget, BudgetExceededError
 
 MAX_LIST = 25
+# Бесплатный пакет запросов API в месяц по текущему тарифу; после него API блокируется.
+# Пакет зависит от договора, поэтому значение настраивается (OPTI24_MONTHLY_QUOTA).
+DEFAULT_MONTHLY_QUOTA = 500
+QUOTA_WARNING_LEFT = 50
+# Регион АЗС ищется отдельным бесплатным запросом на каждую АЗС; при лимите SDK
+# 1 запрос в секунду больше 40 АЗС за вопрос — слишком долгое ожидание.
+MAX_POI_LOOKUPS = 40
 
 
 def _json(payload: object) -> str:
@@ -153,6 +161,28 @@ def build_tools(
         reports_dir or os.environ.get("AGENT_REPORTS_DIR", "reports")
     ).expanduser()
 
+    monthly_quota = int(os.environ.get("OPTI24_MONTHLY_QUOTA", DEFAULT_MONTHLY_QUOTA))
+
+    def quota_payload(info: Any) -> dict[str, object]:
+        """Расход месячного пакета; бюджет сессии не больше остатка, чтобы не довести до блокировки."""
+        package = info.client_info.Queries
+        quota = int(package) if package else monthly_quota
+        used = int(info.methods.all or 0)
+        left = max(quota - used, 0)
+        budget.limit = min(budget.limit, budget.spent + left)
+        payload: dict[str, object] = {
+            "monthly_quota": quota,
+            "quota_source": "API" if package else "настройка OPTI24_MONTHLY_QUOTA",
+            "calls_in_period": used,
+            "left_in_period": left,
+        }
+        if left <= QUOTA_WARNING_LEFT:
+            payload["warning"] = (
+                f"В пакете осталось {left} запросов. Когда пакет закончится, API заблокируется "
+                "до конца периода — для агента и для всех интеграций договора."
+            )
+        return payload
+
     # Операции за период: (date_from, date_to, card_id) -> список. Живёт столько же,
     # сколько бюджет сессии, поэтому повторный вопрос о том же периоде бесплатен.
     tx_cache: dict[tuple[str, str, str | None], list[Any]] = {}
@@ -177,6 +207,99 @@ def build_tools(
             except Exception:  # noqa: BLE001 — справочник не критичен для ответа
                 product_names["__failed__"] = ""
         return product_names.get(code)
+
+    # Названия товаров в прайсе АЗС (справочник Goods): бесплатно, кешируем на сессию.
+    goods_names: dict[str, str] = {}
+
+    async def goods_label(code: str) -> str | None:
+        if not goods_names:
+            try:
+                data = (await client.dictionaries.get_dictionary(name="Goods")).data
+                for item in (data.result if data else None) or []:
+                    label = item.name or item.value or item.id
+                    goods_names[item.id] = label
+                    if item.code:
+                        goods_names[item.code] = label
+            except APIError:
+                goods_names["__failed__"] = ""
+        return goods_names.get(code)
+
+    # Регион АЗС: ID АЗС -> название региона. Справочник и АЗС бесплатны, кешируем на сессию.
+    region_names: dict[str, str] = {}
+    poi_regions: dict[str, str] = {}
+
+    async def region_label(code: str) -> str:
+        if not region_names:
+            try:
+                data = (await client.dictionaries.get_dictionary(name="Region")).data
+                for item in (data.result if data else None) or []:
+                    label = item.name or item.value or item.id
+                    region_names[item.id] = label
+                    if item.code:
+                        region_names[item.code] = label
+            except APIError:
+                region_names["__failed__"] = ""
+        return region_names.get(code) or f"регион {code}"
+
+    async def regions_for(poi_ids: set[str]) -> tuple[dict[str, str], int]:
+        """Регионы для АЗС из кеша и до MAX_POI_LOOKUPS новых запросов; второе — сколько АЗС не проверено."""
+        missing = sorted(poi for poi in poi_ids if poi and poi not in poi_regions)
+        for poi in missing[:MAX_POI_LOOKUPS]:
+            try:
+                data = (await client.dictionaries.get_azs_list_v1(id=poi)).data
+            except APIError:
+                continue
+            stations = (data.result if data else None) or []
+            if stations and stations[0].regionCode:
+                poi_regions[poi] = await region_label(stations[0].regionCode)
+        return {poi: poi_regions[poi] for poi in poi_ids if poi in poi_regions}, max(
+            0, len(missing) - MAX_POI_LOOKUPS
+        )
+
+    async def station_info(poi: str) -> Any | None:
+        """АЗС по ID, а если не нашлась — по номеру или адресу из чека, когда совпадение одно.
+
+        Бесплатно, есть на DEMO. None — АЗС не найдена или совпадений несколько.
+        """
+        for params in ({"id": poi}, {"q": poi, "onpage": 2}):
+            try:
+                data = (await client.dictionaries.get_azs_list_v1(**params)).data
+            except (APIError, RequestValidationError):
+                continue
+            stations = (data.result if data else None) or []
+            if len(stations) == 1:
+                return stations[0]
+        return None
+
+    async def purchase_check(
+        card_id: str, poi_id: str | None, product: str | None, liters: float | None, station: Any | None
+    ) -> dict[str, object]:
+        """check_purchase по товару с ценой из прайса АЗС; без данных — пропуск с причиной."""
+        if not (poi_id and product and liters and liters > 0):
+            return {"allowed": None, "skipped": "нужны poi_id АЗС, product и liters из чека или от водителя"}
+        if station is None:
+            return {"allowed": None, "skipped": "АЗС не найдена или совпадений несколько: уточни ID АЗС"}
+        needle = product.casefold()
+        prices = station.prices or []
+        offered = [(price, await goods_label(price.GoodsCode)) for price in prices]
+        match = next(
+            (price for price, label in offered if needle in (label or price.GoodsCode).casefold()),
+            None,
+        )
+        if match is None:
+            return {
+                "allowed": None,
+                "skipped": "товара нет в прайсе АЗС",
+                "station_goods": [label or price.GoodsCode for price, label in offered][:MAX_LIST],
+            }
+        goods = [{"code": match.GoodsCode, "quantity": float(liters), "price": float(to_decimal(match.Price))}]
+        station_id = getattr(station, "id", None) or poi_id
+        try:
+            response = await client.final_prices.check_purchase(card_id=card_id, poi_id=station_id, goods=goods)
+        except (APIError, RequestValidationError) as exc:
+            # Метод только на рабочем API и только для роли «Администратор».
+            return {"allowed": None, "skipped": f"проверка не выполнена: {type(exc).__name__}"}
+        return {"allowed": bool(response.data), "goods": goods}
 
     async def limits_payload(items: list[Any]) -> list[dict[str, object]]:
         result: list[dict[str, object]] = []
@@ -243,8 +366,7 @@ def build_tools(
                 "role": data.role_name,
                 "read_only": data.read_only,
                 "period": {"from": _iso(info.from_), "to": _iso(info.to)},
-                "package_queries": info.client_info.Queries,
-                "calls_in_period": info.methods.all,
+                **quota_payload(info),
             }
         )
 
@@ -526,6 +648,42 @@ def build_tools(
         return _json({"period": f"{date_from}…{date_to}", **summarize(items)})
 
     @beta_async_tool
+    async def fuel_price_analytics(
+        date_from: str, date_to: str, card_id: str | None = None, product: str | None = None
+    ) -> str:
+        """Цена топлива для клиента со скидкой, литры и суммы по топливу и регионам РФ, где дешевле.
+
+        Цена клиента = списанная сумма / литры. Платно как spending_report (операции
+        кешируются); регион АЗС определяется бесплатно. Период не больше месяца.
+
+        Args:
+            date_from: Начало периода, ГГГГ-ММ-ДД.
+            date_to: Конец периода, ГГГГ-ММ-ДД.
+            card_id: Ограничить одной картой (необязательно).
+            product: Название топлива как в операциях, например "ДТ" (необязательно).
+        """
+        if problem := _check_dates(date_from, date_to):
+            return _json({"error": "bad_dates", "message": problem})
+        try:
+            items = await transactions(date_from, date_to, card_id)
+        except (APIError, BudgetExceededError, RequestValidationError, TransactionsUnavailableError) as exc:
+            return _error(exc)
+        if product:
+            needle = product.casefold()
+            items = [t for t in items if needle in (t.product_name or "").casefold()]
+        region_of, unchecked = await regions_for({t.poi_id for t in items})
+        result: dict[str, object] = {
+            "period": f"{date_from}…{date_to}",
+            **price_analytics(items, region_of),
+        }
+        if unchecked:
+            result["hint"] = (
+                f"Регион не проверен у {unchecked} АЗС: за один вопрос проверяется "
+                f"не больше {MAX_POI_LOOKUPS}. Повтори вопрос, чтобы проверить остальные."
+            )
+        return _json(result)
+
+    @beta_async_tool
     async def list_transactions(
         date_from: str,
         date_to: str,
@@ -788,7 +946,7 @@ def build_tools(
 
     @beta_async_tool
     async def get_api_usage() -> str:
-        """Пакет, период и расход запросов API. Бесплатно."""
+        """Месячный пакет запросов API, расход и остаток до блокировки. Бесплатно."""
         try:
             info = (await client.auth.get_info()).data
         except APIError as exc:
@@ -796,8 +954,7 @@ def build_tools(
         return _json(
             {
                 "period": {"from": _iso(info.from_), "to": _iso(info.to)},
-                "calls_in_period": info.methods.all,
-                "package_queries": info.client_info.Queries,
+                **quota_payload(info),
                 "agent_billable_calls_this_session": budget.spent,
                 "agent_billable_limit": budget.limit,
             }
@@ -1162,12 +1319,19 @@ def build_tools(
 
     @beta_async_tool
     async def diagnose_fueling(
-        card_id: str | None = None, query: str | None = None
+        card_id: str | None = None,
+        query: str | None = None,
+        decline_code: str | None = None,
+        decline_text: str | None = None,
+        poi_id: str | None = None,
+        product: str | None = None,
+        liters: float | None = None,
     ) -> str:
-        """Почему карта не работает: статус, лимиты, регионы, ограничители, баланс.
+        """Почему отказ на АЗС: статус карты, check_purchase, лимиты, баланс, регионы и ограничители, PIN.
 
-        Укажи card_id или query (номер/комментарий). 4 платных запроса; отдаёт
-        проверки, вероятные причины и следующие шаги. Не гарантирует причину.
+        Укажи card_id или query (номер/комментарий). Код и текст причины — из чека
+        отказа. poi_id — ID АЗС или её номер/адрес из чека; с product и liters нужен для
+        check_purchase. 4 платных запроса; называет вероятные причины, а не гарантированные.
         """
         card_id = (card_id or "").strip() or None
         query = (query or "").strip() or None
@@ -1175,6 +1339,10 @@ def build_tools(
             return _json(
                 {"error": "bad_request", "message": "Укажи ровно одно: card_id или query."}
             )
+        receipt = {
+            "decline_code": (decline_code or "").strip()[:20] or None,
+            "decline_text": (decline_text or "").strip()[:120] or None,
+        }
         try:
             if query:
                 found = await client.cards.get_cards_v2(q=query, onpage=2)
@@ -1200,6 +1368,7 @@ def build_tools(
                     )
                 card_id = cards[0].id
 
+            # 1. Статус карты.
             budget.spend()
             detail = (await client.cards.get_card_detail(card_id=card_id)).data.result or []
             if not detail:
@@ -1207,6 +1376,11 @@ def build_tools(
             card = detail[0]
             status_ok = card.status == "Active"
 
+            # 2. Прямой ответ сервера: пройдёт ли покупка (бесплатно, только рабочий API).
+            station = await station_info(poi_id) if poi_id else None
+            purchase = await purchase_check(card_id, poi_id, product, liters, station)
+
+            # 3. Продуктовые лимиты и остаток по ним.
             limits_response = await client.limits.get_limits(card_id=card_id)
             limits = limits_response.data.result or []
             limit_rows = []
@@ -1230,55 +1404,54 @@ def build_tools(
                 )
             exceeded_limits = [row for row in limit_rows if row["exceeded"]]
 
+            # 4. Баланс договора.
+            budget.spend()
+            contract = (await client.contracts.get_contract_data()).data
+            available = to_decimal(contract.balanceData.available_amount)
+
+            # 5. Региональные лимиты и товарные ограничители.
             budget.spend()
             regions_response = await client.region_limits.get_region_limits(card_id=card_id)
             regions = regions_response.data.result or []
-            deny_regions = [
-                {
+
+            def region_row(r: Any) -> dict[str, object]:
+                return {
                     "id": r.id,
                     "country": r.country,
                     "region": r.region,
                     "service_center": r.service_center,
                 }
-                for r in regions
-                if r.limit_type == 2
-            ]
-            allow_regions = [
-                {
-                    "id": r.id,
-                    "country": r.country,
-                    "region": r.region,
-                    "service_center": r.service_center,
-                }
-                for r in regions
-                if r.limit_type == 1
-            ]
+
+            deny_regions = [region_row(r) for r in regions if r.limit_type == 2]
+            allow_regions = [region_row(r) for r in regions if r.limit_type == 1]
+            station_region = station.regionCode if station else None
+
+            def matches_station(row: dict[str, object]) -> bool:
+                station_ids = {sid for sid in (getattr(station, "id", None), poi_id) if sid}
+                return station is not None and (
+                    row["service_center"] in station_ids
+                    or (station_region is not None and row["region"] == station_region)
+                )
+
+            denied_here = [row for row in deny_regions if matches_station(row)]
+            # Есть разрешающие правила, но ни одно не про эту АЗС или её регион.
+            outside_allowed = bool(station and allow_regions) and not any(
+                matches_station(row) for row in allow_regions
+            )
 
             budget.spend()
             restrictions_response = await client.restrictions.get_restrictions(card_id=card_id)
             restrictions = restrictions_response.data.result or []
             deny_restrictions = [
-                {
-                    "id": r.id,
-                    "product_type": r.productType,
-                    "product": r.productTypeName,
-                }
+                {"id": r.id, "product_type": r.productType, "product": r.productTypeName}
                 for r in restrictions
                 if r.restriction_type == 2
             ]
             allow_restrictions = [
-                {
-                    "id": r.id,
-                    "product_type": r.productType,
-                    "product": r.productTypeName,
-                }
+                {"id": r.id, "product_type": r.productType, "product": r.productTypeName}
                 for r in restrictions
                 if r.restriction_type == 1
             ]
-
-            budget.spend()
-            contract = (await client.contracts.get_contract_data()).data
-            available = to_decimal(contract.balanceData.available_amount)
         except (APIError, BudgetExceededError, RequestValidationError) as exc:
             return _error(exc)
 
@@ -1287,21 +1460,33 @@ def build_tools(
         if not status_ok:
             causes.append(f"карта в статусе {card.status}: это может блокировать заправку")
             steps.append("Проверить блокировку и при необходимости разблокировать по решению человека.")
+        if purchase.get("allowed") is False:
+            causes.append("сервер отвечает, что покупка этого товара по карте на этой АЗС невозможна")
+            steps.append("Сверить остальные проверки: они подскажут, какое правило мешает.")
         if exceeded_limits:
             causes.append("исчерпан продуктовый лимит")
             steps.append("Проверить лимит и при необходимости изменить его или дождаться сброса периода.")
-        if deny_regions:
-            causes.append("есть запрещающий региональный лимит")
-            steps.append("Проверить регион/АЗС и при необходимости изменить региональное правило.")
-        if deny_restrictions:
-            causes.append("есть запрещающий товарный ограничитель")
-            steps.append("Проверить продукт и при необходимости изменить ограничитель.")
         if available <= 0:
             causes.append(f"на договоре доступно {rub(available)}")
             steps.append("Пополнить договор.")
+        if denied_here or outside_allowed:
+            causes.append("региональный лимит не пускает на эту АЗС или в этот регион")
+            steps.append("Проверить регион/АЗС и при необходимости изменить региональное правило.")
+        elif deny_regions:
+            causes.append("есть запрещающий региональный лимит; без АЗС из чека нельзя сказать, мешает ли он")
+            steps.append("Узнать АЗС из чека отказа и повторить проверку с poi_id.")
+        if deny_restrictions:
+            causes.append("есть запрещающий товарный ограничитель")
+            steps.append("Проверить продукт и при необходимости изменить ограничитель.")
+        if receipt["decline_text"] and re.search(r"pin|пин", receipt["decline_text"], re.IGNORECASE):
+            causes.append("в чеке отказа упомянут PIN: возможно, превышено число неверных вводов")
+            steps.append("Сбросить счётчик неверных вводов PIN в личном кабинете или через поддержку оператора.")
         if not causes:
-            causes.append("явной причины в данных нет: проверьте АЗС, терминал и продукт")
-            steps.append("Повторить заправку; если не помогает — обратиться в поддержку оператора.")
+            causes.append("явной причины в данных карты и договора нет")
+            steps.append(
+                "Повторить заправку; если отказ повторяется — позвонить в поддержку по телефону "
+                "из чека и назвать код ответа, дату, время и АЗС."
+            )
 
         return _json(
             {
@@ -1312,11 +1497,18 @@ def build_tools(
                     "comment": card.comment,
                     "available": _rub_optional(card.available),
                 },
+                "receipt": receipt,
                 "checks": {
                     "card_status": {"ok": status_ok, "value": card.status},
+                    "check_purchase": purchase,
                     "limits": {"ok": not exceeded_limits, "items": limit_rows},
+                    "contract_balance": {"ok": available > 0, "value": rub(available)},
                     "region_limits": {
-                        "ok": not deny_regions,
+                        # None — запрет есть, но без АЗС из чека не видно, касается ли он заправки.
+                        "ok": False
+                        if denied_here or outside_allowed
+                        else (None if deny_regions and not poi_id else True),
+                        "station_region": station_region,
                         "deny": deny_regions,
                         "allow": allow_regions,
                     },
@@ -1325,7 +1517,10 @@ def build_tools(
                         "deny": deny_restrictions,
                         "allow": allow_restrictions,
                     },
-                    "contract_balance": {"ok": available > 0, "value": rub(available)},
+                    "pin_attempts": {
+                        "ok": None,
+                        "note": "API не показывает счётчик неверных вводов PIN; спроси водителя.",
+                    },
                 },
                 "likely_causes": causes,
                 "next_steps": steps,
@@ -1479,6 +1674,7 @@ def build_tools(
         list_transactions,
         get_transaction_detail,
         find_suspicious_fills,
+        fuel_price_analytics,
         get_finance,
         get_report_status,
         download_fuel_report,

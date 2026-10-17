@@ -647,11 +647,98 @@ def test_diagnose_fueling_returns_checks_and_causes(tmp_path: Path) -> None:
     )
     out = json.loads(asyncio.run(tools["diagnose_fueling"].call({"card_id": "c1"})))
     assert out["checks"]["card_status"]["ok"] is True
-    assert out["checks"]["region_limits"]["ok"] is False
+    # Запрет на регион есть, но без АЗС из чека нельзя сказать, мешает ли он.
+    assert out["checks"]["region_limits"]["ok"] is None
     assert out["checks"]["restrictions"]["ok"] is False
     assert out["checks"]["contract_balance"]["ok"] is True
+    assert out["checks"]["check_purchase"]["allowed"] is None
+    assert out["checks"]["pin_attempts"]["ok"] is None
     assert any("регион" in cause for cause in out["likely_causes"])
     assert budget.spent == 4
+
+
+def _station(fake: NS, region: str = "MOS", allowed: bool = True) -> list[dict[str, object]]:
+    purchases: list[dict[str, object]] = []
+
+    async def get_azs_list_v1(*, id: str, **_: object) -> NS:
+        prices = [NS(GoodsCode="DT", Price="65.50")]
+        return NS(data=NS(result=[NS(regionCode=region, prices=prices)], total_count=1))
+
+    async def get_dictionary(*, name: str, **_: object) -> NS:
+        return NS(data=NS(result=[NS(id="DT", code=None, name="ДТ", value=None)], total_count=1))
+
+    async def check_purchase(**kwargs: object) -> NS:
+        purchases.append(kwargs)
+        return NS(data=allowed)
+
+    fake.dictionaries = NS(get_azs_list_v1=get_azs_list_v1, get_dictionary=get_dictionary)
+    fake.final_prices = NS(check_purchase=check_purchase)
+    return purchases
+
+
+def test_diagnose_follows_decline_receipt_and_station(tmp_path: Path) -> None:
+    fake, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, budget_limit=10)
+    purchases = _station(fake, region="MOS", allowed=False)
+    args = {
+        "card_id": "c1", "decline_code": "ER3", "decline_text": "Операция прервана",
+        "poi_id": "azs-1", "product": "дт", "liters": 50,
+    }
+    out = json.loads(asyncio.run(tools["diagnose_fueling"].call(args)))
+    assert out["receipt"] == {"decline_code": "ER3", "decline_text": "Операция прервана"}
+    assert purchases == [
+        {"card_id": "c1", "poi_id": "azs-1", "goods": [{"code": "DT", "quantity": 50.0, "price": 65.5}]}
+    ]
+    assert out["checks"]["check_purchase"]["allowed"] is False
+    assert out["checks"]["region_limits"]["ok"] is False  # запрет на регион MOS, АЗС в MOS
+    causes = out["likely_causes"]
+    # Порядок проверок: статус → check_purchase → лимиты → баланс → регион и ограничитель → PIN.
+    assert causes.index(next(c for c in causes if "покупка" in c)) < causes.index(
+        next(c for c in causes if "региональный" in c)
+    )
+    assert budget.spent == 4  # АЗС, справочник и check_purchase бесплатны
+
+
+def test_diagnose_station_outside_denied_region_is_ok(tmp_path: Path) -> None:
+    fake, _, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, budget_limit=10)
+    _station(fake, region="SPB", allowed=True)
+    args = {"card_id": "c1", "poi_id": "azs-1", "product": "ДТ", "liters": 30}
+    out = json.loads(asyncio.run(tools["diagnose_fueling"].call(args)))
+    assert out["checks"]["region_limits"]["ok"] is True
+    assert out["checks"]["check_purchase"]["allowed"] is True
+
+
+def test_diagnose_reports_goods_missing_from_station_price_list(tmp_path: Path) -> None:
+    fake, _, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, budget_limit=10)
+    purchases = _station(fake)
+    args = {"card_id": "c1", "poi_id": "azs-1", "product": "АИ-100", "liters": 30}
+    out = json.loads(asyncio.run(tools["diagnose_fueling"].call(args)))
+    assert out["checks"]["check_purchase"]["skipped"] == "товара нет в прайсе АЗС"
+    assert out["checks"]["check_purchase"]["station_goods"] == ["ДТ"] and purchases == []
+
+
+def test_diagnose_finds_station_by_number_from_receipt(tmp_path: Path) -> None:
+    fake, _, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, budget_limit=10)
+    purchases = _station(fake, region="SPB")
+    searches: list[dict[str, object]] = []
+    station = NS(id="poi-137", regionCode="SPB", prices=[NS(GoodsCode="DT", Price="65.50")])
+
+    async def get_azs_list_v1(**params: object) -> NS:
+        searches.append(params)
+        found = [station] if params.get("q") == "АЗС 137" else []
+        return NS(data=NS(result=found, total_count=len(found)))
+
+    fake.dictionaries.get_azs_list_v1 = get_azs_list_v1
+    args = {"card_id": "c1", "poi_id": "АЗС 137", "product": "ДТ", "liters": 40}
+    out = json.loads(asyncio.run(tools["diagnose_fueling"].call(args)))
+    assert searches == [{"id": "АЗС 137"}, {"q": "АЗС 137", "onpage": 2}]
+    assert purchases[0]["poi_id"] == "poi-137" and out["checks"]["check_purchase"]["allowed"] is True
+
+
+def test_diagnose_pin_in_receipt_text_becomes_a_cause(tmp_path: Path) -> None:
+    _, _, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, budget_limit=10)
+    args = {"card_id": "c1", "decline_text": "Неверный PIN"}
+    out = json.loads(asyncio.run(tools["diagnose_fueling"].call(args)))
+    assert any("PIN" in cause for cause in out["likely_causes"])
 
 
 def test_download_fuel_report_saves_file(tmp_path: Path) -> None:
@@ -705,7 +792,7 @@ def test_mcp_server_exposes_all_tools() -> None:
         "get_account_context", "get_contract_summary", "list_cards", "list_card_groups",
         "get_card_profile", "get_limits", "get_access_rules", "diagnose_fueling",
         "spending_report", "list_transactions", "get_transaction_detail",
-        "find_suspicious_fills", "get_finance", "get_report_status",
+        "find_suspicious_fills", "fuel_price_analytics", "get_finance", "get_report_status",
         "download_fuel_report", "get_api_usage", "block_cards",
         "set_card_comment", "set_limit", "set_region_limit", "set_restriction",
         "order_fuel_report", "remove_limit", "remove_region_limit",
@@ -1071,3 +1158,54 @@ def test_openai_tool_args_tolerate_broken_json() -> None:
 
     assert parse_tool_args('{"card_id": "c1"}') == {"card_id": "c1"}
     assert parse_tool_args("{oops") == {} and parse_tool_args("[1]") == {} and parse_tool_args(None) == {}
+
+
+def _usage(fake: NS, package: object, used: int) -> None:
+    async def get_info(**_: object) -> NS:
+        return NS(
+            data=NS(
+                from_=datetime(2026, 10, 1),
+                to=datetime(2026, 11, 1),
+                client_info=NS(Queries=package),
+                methods=NS(all=used),
+            )
+        )
+
+    fake.auth.get_info = get_info
+
+
+def test_api_usage_shows_left_in_monthly_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPTI24_MONTHLY_QUOTA", raising=False)
+    fake, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, budget_limit=10)
+    _usage(fake, None, 120)
+    out = json.loads(asyncio.run(tools["get_api_usage"].call({})))
+    assert out["monthly_quota"] == 500 and out["quota_source"].startswith("настройка")
+    assert out["left_in_period"] == 380 and "warning" not in out and budget.limit == 10
+
+
+def test_nearly_exhausted_package_warns_and_caps_session_budget(tmp_path: Path) -> None:
+    fake, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, budget_limit=10)
+    _usage(fake, 500, 497)
+    out = json.loads(asyncio.run(tools["get_api_usage"].call({})))
+    assert out["left_in_period"] == 3 and "заблокируется" in out["warning"]
+    assert budget.limit == 3  # агент сам не израсходует пакет до блокировки
+
+
+def test_exhausted_package_stops_paid_calls(tmp_path: Path) -> None:
+    fake, budget, tools = make_tools(
+        Mode.READ_ONLY, answer=False, tmp=tmp_path, txs=[tx(1, 12, "60.00", 10)], budget_limit=10
+    )
+    _usage(fake, 500, 500)
+    asyncio.run(tools["get_api_usage"].call({}))
+    out = json.loads(
+        asyncio.run(tools["spending_report"].call({"date_from": "2026-09-01", "date_to": "2026-09-30"}))
+    )
+    assert out["error"] == "BudgetExceededError" and budget.spent == 0
+
+
+def test_package_size_from_api_wins_over_setting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPTI24_MONTHLY_QUOTA", "500")
+    fake, _, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path)
+    _usage(fake, 2000, 600)
+    out = json.loads(asyncio.run(tools["get_api_usage"].call({})))
+    assert (out["monthly_quota"], out["quota_source"], out["left_in_period"]) == (2000, "API", 1400)

@@ -4,10 +4,11 @@
 Роль цикла и модели берёт на себя Claude Code (модель выбирается командой /model),
 а наши инструменты, расчёты и предохранители остаются теми же.
 
-Подтверждение изменений: Claude Code сам спрашивает разрешение перед каждым
-вызовом MCP-инструмента, поэтому ``AGENT_MODE=confirm`` здесь означает «человек
-уже нажал Allow». Не добавляйте ``block_cards`` в список автоматически
-разрешённых инструментов.
+Подтверждение изменений: окну «Allow» в Claude Code доверять нельзя — инструмент
+могут разрешить заранее или запустить в автоматическом режиме, и тогда изменение
+прошло бы без человека. Поэтому при ``AGENT_MODE=confirm`` сервер сам спрашивает
+человека через MCP elicitation: вопрос показывает клиент, и модель ответить за
+человека не может. Клиент без elicitation или любой сбой запроса — отказ.
 
 Запуск вручную: ``python -m agent.mcp_server`` (обычно запускает сам Claude Code).
 """
@@ -21,7 +22,9 @@ from datetime import date
 from pathlib import Path
 
 from apisdkopti24 import APIClient, ConnectionSettings, EnvironmentCredentialsProvider
+from mcp.server.elicitation import AcceptedElicitation
 from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel, Field
 
 from .config import Mode, Settings
 from .contract import is_production, open_session, preferred_contract_id
@@ -35,8 +38,17 @@ server = FastMCP("fuel-cards")
 _client: APIClient | None = None
 
 
-async def _human_already_approved(_: str) -> bool:
-    return True  # разрешение даёт окно подтверждения Claude Code
+class _Confirmation(BaseModel):
+    confirm: bool = Field(description="Выполнить это изменение")
+
+
+async def _ask_human_via_client(prompt: str) -> bool:
+    """Спрашивает человека через окно MCP-клиента; только явное «да» разрешает изменение."""
+    try:
+        result = await server.get_context().elicit(message=prompt, schema=_Confirmation)
+    except Exception:  # noqa: BLE001 — граница безопасности: не смогли спросить человека — не меняем
+        return False
+    return isinstance(result, AcceptedElicitation) and result.data.confirm
 
 
 async def _get_client() -> APIClient:
@@ -62,7 +74,7 @@ async def _get_client() -> APIClient:
 
 def _register() -> None:
     budget = BillingBudget(limit=settings.max_billable_calls)
-    gate = ApprovalGate(mode=settings.mode, ask=_human_already_approved, audit_log=settings.audit_log)
+    gate = ApprovalGate(mode=settings.mode, ask=_ask_human_via_client, audit_log=settings.audit_log)
     proxy = _ClientProxy()
     for tool in build_tools(proxy, budget, gate):  # type: ignore[arg-type]
         server.tool(name=tool.name)(tool.func)  # описание берётся из docstring

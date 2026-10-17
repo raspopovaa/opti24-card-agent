@@ -6,7 +6,7 @@ import json
 from datetime import date
 from pathlib import Path
 
-from evals.run_evals import check_case, date_placeholders
+from evals.run_evals import STOP_STATUSES, check_case, date_placeholders, describe_api_error
 
 TODAY = date(2026, 10, 17)
 
@@ -63,3 +63,17 @@ def test_cases_file_is_valid() -> None:
         assert case["q"] and isinstance(case["must_call"], list) and isinstance(case["must_not_call"], list)
         for tool, expected in case.get("expect_args", {}).items():
             assert tool and isinstance(expected, dict) and expected
+
+
+def test_api_error_description_has_status_and_no_request_body() -> None:
+    class ProviderError(Exception):
+        status_code = 503
+        message = "Service   temporarily\nunavailable " + "x" * 500
+
+    text = describe_api_error(ProviderError())
+    assert text.startswith("ошибка API 503: Service temporarily unavailable") and len(text) < 200
+    assert describe_api_error(ValueError("boom")) == "ошибка API: ValueError"
+
+
+def test_balance_and_rate_limit_errors_stop_the_run() -> None:
+    assert set(STOP_STATUSES) == {402, 429}

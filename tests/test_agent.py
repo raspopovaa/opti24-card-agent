@@ -22,14 +22,35 @@ def tx(i: int, hour: int, price: str, qty: float, card: str = "c1", day: int = 1
         id=i,
         timestamp=datetime(2026, 9, day, hour, 0),
         card_id=card,
+        card_number=f"782601000000{i:04d}",
         poi_id="p",
+        terminal_id="t1",
+        check_id=i,
         type="P",
         product_name="АИ-95",
         qty=qty,
         price=price,
         sum=str(Decimal(price) * Decimal(str(qty))),
+        discount="0",
         is_storno=False,
+        is_manual_correction=False,
     )
+
+
+class Dump:
+    """Мини-замена Pydantic-модели: поля и model_dump()."""
+
+    def __init__(self, data: dict[str, object]) -> None:
+        self._data = data
+
+    def __getattr__(self, name: str) -> object:
+        try:
+            return self._data[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+    def model_dump(self) -> dict[str, object]:
+        return self._data
 
 
 def test_money_has_no_float_error() -> None:
@@ -66,27 +87,274 @@ def test_budget_blocks_overspend() -> None:
 class FakeOpti24:
     def __init__(self, transactions: list[NS]) -> None:
         self.blocked: list[str] = []
+        self.contract_id = "c1"
+        self.comments: list[tuple[str, str]] = []
+        self.saved_limits: list[NS] = []
+        self.saved_regions: list[NS] = []
+        self.saved_restrictions: list[NS] = []
+        self.ordered_reports: list[dict[str, object]] = []
         page = NS(data=NS(result=transactions, total_count=len(transactions)))
 
         async def get_transactions_v2(**_: object) -> NS:
             return page
 
-        async def block_card(*, card_ids: list[str], block: bool) -> None:
-            self.blocked += card_ids
+        async def get_card_transactions_v2(**_: object) -> NS:
+            return page
 
-        self.transactions = NS(get_transactions_v2=get_transactions_v2)
-        self.cards = NS(block_card=block_card)
+        async def get_transaction_detail(**_: object) -> NS:
+            item = transactions[0] if transactions else tx(999, 12, "60.00", 10)
+            return NS(data=NS(result=[item], total_count=1))
+
+        async def block_card(*, card_ids: list[str], block: bool) -> NS:
+            self.blocked += card_ids if block else []
+            return NS(data=list(card_ids))
+
+        card = NS(
+            id="c1",
+            number="7826010000000001",
+            status="Active",
+            status_name="Активна",
+            group_name="Грузовые",
+            comment="Газель, Иванов",
+        )
+        detail = NS(
+            id="c1",
+            number="7826010000000001",
+            status="Active",
+            comment="Газель, Иванов",
+            product="limit",
+            carrier="Plastic",
+            available="9000.00",
+            currency="RUB",
+            date_last_usage=None,
+            servicecenter_last_usage_name="АЗС-1",
+            mpc=False,
+            pin_reset=3,
+            pin_counter=0,
+        )
+        driver = NS(
+            last_name="Иванов",
+            first_name="Иван",
+            middle_name=None,
+            position="Водитель",
+            role="Driver",
+            mobile_phone="+7 900 000-00-00",
+        )
+        limit = NS(
+            id="l1",
+            card_id="c1",
+            group_id=None,
+            productType="1-CK231",
+            productGroup=None,
+            amount=None,
+            sum=Dump({"value": 9000.0, "used": 231.46, "currency": "810"}),
+            term=None,
+            transactions=None,
+            time=NS(number=1, type=5),
+        )
+
+        async def get_card_detail(**_: object) -> NS:
+            return NS(data=NS(result=[detail], total_count=1))
+
+        async def get_card_drivers(**_: object) -> NS:
+            return NS(data=NS(result=[driver], total_count=1))
+
+        async def get_cards_v2(**_: object) -> NS:
+            return NS(data=NS(result=[card], total_count=1))
+
+        async def get_limits(**_: object) -> NS:
+            return NS(data=NS(result=[limit], total_count=1))
+
+        async def get_dictionary(**_: object) -> NS:
+            item = NS(id="1-CK231", name="Топливо", value=None)
+            return NS(data=NS(result=[item], total_count=1))
+
+        async def get_contract_data(**_: object) -> NS:
+            contract_data = NS(
+                contract_number="D-1",
+                contract_status_name="Действует",
+                balance_amount_limiter=None,
+                current_amount_limiter="14277644.68",
+                credit_limit=None,
+            )
+            balance = NS(
+                available_amount="123139.19",
+                own_balance="1150502.89",
+                consumption_for_month="1202214.25",
+                consumption_for_month_volume="200",
+            )
+            cards = NS(cards_quantity_all="3", cards_quantity_active="2")
+            return NS(data=NS(contractData=contract_data, balanceData=balance, cardsData=cards))
+
+        async def get_payments(**_: object) -> NS:
+            item = NS(
+                id="p1",
+                date="2026-10-02T10:00:00",
+                amount="1000.00",
+                amount_client="1000.00",
+                currency="810;RUR",
+                description="Оплата по счёту",
+                payment_name="Платёж",
+                payment_number="1",
+            )
+            return NS(data=NS(result=[item], total_count=1))
+
+        async def get_invoices(**_: object) -> NS:
+            item = NS(
+                id="i1",
+                ref_number="СЧ-1",
+                date_start="2026-10-01",
+                date_end="2026-10-31",
+                amount="5000.00",
+                paid_amount="0.00",
+                status="OPEN",
+                comment=None,
+            )
+            return NS(data=NS(result=[item], total_count=1))
+
+        async def get_documents(**_: object) -> NS:
+            item = NS(
+                id="d1",
+                name="УПД",
+                number="1",
+                date=1759363200,
+                total=1200.0,
+                vat=200.0,
+                sum=1000.0,
+                currency="руб.",
+                consignee="ООО Ромашка",
+            )
+            return NS(data=NS(result=[item], total_count=1))
+
+        async def auth_user(**_: object) -> NS:
+            contract = NS(id="c1", number="D-1", cards_count=3)
+            data = NS(
+                contracts=[contract],
+                org_name="ООО Ромашка",
+                role_name="Администратор",
+                read_only=False,
+            )
+            return NS(data=data)
+
+        async def get_info(**_: object) -> NS:
+            data = NS(
+                from_=datetime(2026, 10, 1),
+                to=datetime(2026, 11, 1),
+                client_info=NS(Queries=None),
+                methods=NS(all=10),
+            )
+            return NS(data=data)
+
+        async def set_card_comment(**kwargs: object) -> NS:
+            self.comments.append((str(kwargs["card_id"]), str(kwargs["comment"])))
+            return NS(data=True)
+
+        async def set_limit(**kwargs: object) -> NS:
+            self.saved_limits.extend(kwargs["limits"])
+            return NS(data=["l1"])
+
+        async def get_region_limits(**_: object) -> NS:
+            item = NS(
+                id="r1", card_id="c1", group_id=None, country="RUS", region="MOS",
+                service_center=None, partner=None, limit_type=2, date="2026-10-01",
+            )
+            return NS(data=NS(result=[item], total_count=1))
+
+        async def set_region_limit(**kwargs: object) -> NS:
+            self.saved_regions.extend(kwargs["region_limits"])
+            return NS(data=["r1"])
+
+        async def get_restrictions(**_: object) -> NS:
+            item = NS(
+                id="s1", card_id="c1", group_id=None, productType="1-CK231",
+                productTypeName="Топливо", productGroup=None, productGroupName=None,
+                restriction_type=2, date="2026-10-01",
+            )
+            return NS(data=NS(result=[item], total_count=1))
+
+        async def set_restriction(**kwargs: object) -> NS:
+            self.saved_restrictions.extend(kwargs["restrictions"])
+            return NS(data=["s1"])
+
+        async def order_report_v1(**kwargs: object) -> NS:
+            self.ordered_reports.append(dict(kwargs))
+            return NS(data=["job1"])
+
+        async def download_report_file_v1_to(*, job_id: str, destination: Path) -> Path:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(b"xlsx")
+            return destination
+
+        async def remove_limit(**_: object) -> NS:
+            return NS(data=True)
+
+        async def remove_region_limit(**_: object) -> NS:
+            return NS(data=True)
+
+        async def remove_restriction(**_: object) -> NS:
+            return NS(data=True)
+
+        async def get_report_job_list_v1(**_: object) -> NS:
+            item = NS(
+                job_id="job1", date="2026-10-01", report_name="Транзакции",
+                report_format="xlsx", contract_id="c1", client_id="cl1", user_id="u1",
+            )
+            return NS(data=[item])
+
+        self.transactions = NS(
+            get_transactions_v2=get_transactions_v2,
+            get_card_transactions_v2=get_card_transactions_v2,
+            get_transaction_detail=get_transaction_detail,
+        )
+        self.cards = NS(
+            block_card=block_card,
+            get_card_detail=get_card_detail,
+            get_card_drivers=get_card_drivers,
+            get_cards_v2=get_cards_v2,
+            set_card_comment=set_card_comment,
+        )
+        self.limits = NS(
+            get_limits=get_limits, set_limit=set_limit, remove_limit=remove_limit
+        )
+        self.region_limits = NS(
+            get_region_limits=get_region_limits,
+            set_region_limit=set_region_limit,
+            remove_region_limit=remove_region_limit,
+        )
+        self.restrictions = NS(
+            get_restrictions=get_restrictions,
+            set_restriction=set_restriction,
+            remove_restriction=remove_restriction,
+        )
+        self.reports = NS(
+            order_report_v1=order_report_v1,
+            get_report_job_list_v1=get_report_job_list_v1,
+            download_report_file_v1_to=download_report_file_v1_to,
+        )
+        self.dictionaries = NS(get_dictionary=get_dictionary)
+        self.contracts = NS(
+            get_contract_data=get_contract_data,
+            get_payments=get_payments,
+            get_invoices=get_invoices,
+            get_documents=get_documents,
+        )
+        self.auth = NS(auth_user=auth_user, get_info=get_info)
 
 
-def make_tools(mode: Mode, answer: bool, tmp: Path, txs: list[NS] | None = None):
+def make_tools(
+    mode: Mode, answer: bool, tmp: Path, txs: list[NS] | None = None, budget_limit: int = 3
+):
     fake = FakeOpti24(txs or [])
-    budget = BillingBudget(limit=3)
+    budget = BillingBudget(limit=budget_limit)
 
     async def ask(_: str) -> bool:
         return answer
 
     gate = ApprovalGate(mode=mode, ask=ask, audit_log=tmp / "audit.jsonl")
-    tools = {t.name: t for t in build_tools(fake, budget, gate)}  # type: ignore[arg-type]
+    tools = {
+        t.name: t
+        for t in build_tools(fake, budget, gate, reports_dir=tmp / "reports")  # type: ignore[arg-type]
+    }
     return fake, budget, tools
 
 
@@ -102,6 +370,18 @@ def test_block_works_after_yes_and_is_audited(tmp_path: Path) -> None:
     assert fake.blocked == ["a", "b"]
     log = (tmp_path / "audit.jsonl").read_text(encoding="utf-8")
     assert '"approved": true' in log and "тест" not in log  # причина и ID в журнал не попадают
+
+
+def test_unblock_uses_same_tool(tmp_path: Path) -> None:
+    fake, _, tools = make_tools(Mode.CONFIRM, answer=True, tmp=tmp_path)
+    out = json.loads(
+        asyncio.run(
+            tools["block_cards"].call(
+                {"card_ids": ["a"], "reason": "карта нашлась", "block": False}
+            )
+        )
+    )
+    assert out["status"] == "unblocked" and out["done"] == ["a"]
 
 
 def test_read_only_mode_never_blocks_even_if_human_says_yes(tmp_path: Path) -> None:
@@ -150,16 +430,258 @@ def test_block_dedupes_ids_and_shows_them_to_human(tmp_path: Path) -> None:
     out = json.loads(
         asyncio.run(tools["block_cards"].call({"card_ids": ["c7", "c7", " "], "reason": "x"}))
     )
-    assert out == {"status": "blocked", "cards": 1} and fake.blocked == ["c7"]
+    assert out["status"] == "blocked" and out["done"] == ["c7"] and out["not_done"] == []
+    assert fake.blocked == ["c7"]
     assert "c7" in asked[0]
     assert "c7" not in (tmp_path / "audit.jsonl").read_text(encoding="utf-8")
 
 
-def test_limits_need_exactly_one_target(tmp_path: Path) -> None:
+def test_limits_allow_contract_and_reject_two_targets(tmp_path: Path) -> None:
     _, _, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path)
-    for args in ({}, {"card_id": "c1", "group_id": "g1"}):
-        out = json.loads(asyncio.run(tools["get_limits"].call(args)))
-        assert out["error"] == "bad_request"
+    both = json.loads(
+        asyncio.run(tools["get_limits"].call({"card_id": "c1", "group_id": "g1"}))
+    )
+    assert both["error"] == "bad_request"
+    contract = json.loads(asyncio.run(tools["get_limits"].call({})))
+    assert contract["total"] == 1 and contract["limits"][0]["product"] == "Топливо"
+
+
+def test_account_context_has_role_and_read_only(tmp_path: Path) -> None:
+    _, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path)
+    out = json.loads(asyncio.run(tools["get_account_context"].call({})))
+    assert out["role"] == "Администратор" and out["read_only"] is False
+    assert out["period"]["from"].startswith("2026-10-01")
+    assert out["contract"]["number"] == "D-1" and budget.spent == 0
+
+
+def test_contract_summary_uses_balance_data_and_none_limits(tmp_path: Path) -> None:
+    _, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path)
+    out = json.loads(asyncio.run(tools["get_contract_summary"].call({})))
+    assert out["available"] == "123 139,19 ₽"
+    assert out["own_funds"] == "1 150 502,89 ₽"
+    assert out["month_spent"] == "1 202 214,25 ₽"
+    assert out["limit_available"] is None and out["credit_limit"] is None
+    assert budget.spent == 1
+
+
+def test_limits_include_product_period_and_usage(tmp_path: Path) -> None:
+    _, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path)
+    out = json.loads(asyncio.run(tools["get_limits"].call({"card_id": "c1"})))
+    item = out["limits"][0]
+    assert item["product"] == "Топливо"
+    assert item["period"] == {"number": 1, "type": 5}
+    assert item["sum"]["used"] == 231.46
+    assert out["total"] == 1 and budget.spent == 0
+
+
+def test_card_profile_includes_driver_and_limits(tmp_path: Path) -> None:
+    _, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path)
+    out = json.loads(asyncio.run(tools["get_card_profile"].call({"card_id": "c1"})))
+    assert out["number"] == "7826010000000001"
+    assert out["group"] == "Грузовые"
+    assert out["drivers"][0]["name"] == "Иванов Иван"
+    assert out["limits"][0]["product"] == "Топливо"
+    assert budget.spent == 2
+
+
+def test_list_transactions_filters_and_reuses_cache(tmp_path: Path) -> None:
+    fuel = tx(1, 12, "60.00", 10)
+    diesel = tx(2, 13, "70.00", 40)
+    diesel.product_name = "ДТ"
+    _, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, txs=[fuel, diesel])
+    args = {"date_from": "2026-09-01", "date_to": "2026-09-30"}
+    out = json.loads(asyncio.run(tools["list_transactions"].call({**args, "product": "ДТ"})))
+    assert out["total"] == 1 and out["transactions"][0]["product"] == "ДТ"
+    asyncio.run(tools["spending_report"].call(args))
+    assert budget.spent == 1  # операции за один период загружены один раз
+
+
+def test_transaction_detail_is_free(tmp_path: Path) -> None:
+    _, budget, tools = make_tools(
+        Mode.READ_ONLY, answer=False, tmp=tmp_path, txs=[tx(1, 12, "60.00", 10)]
+    )
+    out = json.loads(asyncio.run(tools["get_transaction_detail"].call({"transaction_id": "1"})))
+    assert out["sum"] == "600,00 ₽" and out["card_number"].startswith("7826")
+    assert budget.spent == 0
+
+
+def test_finance_payments_are_paid_and_documents_free(tmp_path: Path) -> None:
+    _, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path)
+    payments = json.loads(
+        asyncio.run(
+            tools["get_finance"].call(
+                {"kind": "payments", "date_from": "2026-10-01", "date_to": "2026-10-31"}
+            )
+        )
+    )
+    assert payments["total"] == 1 and budget.spent == 1
+    documents = json.loads(
+        asyncio.run(
+            tools["get_finance"].call(
+                {"kind": "documents", "date_from": "2026-10-01", "date_to": "2026-10-31"}
+            )
+        )
+    )
+    assert documents["total"] == 1 and budget.spent == 1  # документы бесплатны
+
+
+def test_block_reports_partial_result(tmp_path: Path) -> None:
+    fake = FakeOpti24([])
+
+    async def partial(*, card_ids: list[str], block: bool) -> NS:
+        fake.blocked += card_ids
+        return NS(data=card_ids[:1])
+
+    fake.cards.block_card = partial  # type: ignore[attr-defined]
+
+    async def ask(_: str) -> bool:
+        return True
+
+    gate = ApprovalGate(mode=Mode.CONFIRM, ask=ask, audit_log=tmp_path / "audit.jsonl")
+    tools = {t.name: t for t in build_tools(fake, BillingBudget(limit=3), gate)}  # type: ignore[arg-type]
+    out = json.loads(
+        asyncio.run(tools["block_cards"].call({"card_ids": ["a", "b"], "reason": "тест"}))
+    )
+    assert out["status"] == "partial" and out["done"] == ["a"] and out["not_done"] == ["b"]
+
+
+def test_set_limit_sends_model_after_confirmation(tmp_path: Path) -> None:
+    fake, budget, tools = make_tools(Mode.CONFIRM, answer=True, tmp=tmp_path)
+    out = json.loads(
+        asyncio.run(
+            tools["set_limit"].call(
+                {
+                    "card_id": "c1",
+                    "product_type": "1-CK231",
+                    "liters": 100,
+                    "period_number": 1,
+                    "period_type": 3,
+                }
+            )
+        )
+    )
+    assert out["status"] == "saved" and out["limit_ids"] == ["l1"]
+    item = fake.saved_limits[0]
+    assert item.amount.value == 100 and item.time.type == 3 and budget.spent == 1
+
+
+def test_set_limit_is_blocked_in_read_only(tmp_path: Path) -> None:
+    fake, _, tools = make_tools(Mode.READ_ONLY, answer=True, tmp=tmp_path)
+    out = json.loads(
+        asyncio.run(
+            tools["set_limit"].call(
+                {"card_id": "c1", "rubles": 5000, "period_type": 5}
+            )
+        )
+    )
+    assert out["status"] == "not_allowed" and fake.saved_limits == []
+
+
+def test_set_card_comment_validates_length_and_saves(tmp_path: Path) -> None:
+    fake, budget, tools = make_tools(Mode.CONFIRM, answer=True, tmp=tmp_path)
+    bad = json.loads(
+        asyncio.run(tools["set_card_comment"].call({"card_id": "c1", "comment": "x" * 91}))
+    )
+    assert bad["error"] == "bad_request" and fake.comments == []
+    good = json.loads(
+        asyncio.run(tools["set_card_comment"].call({"card_id": "c1", "comment": "Газель, Иванов"}))
+    )
+    assert good["status"] == "updated" and fake.comments == [("c1", "Газель, Иванов")]
+    assert budget.spent == 1
+
+
+def test_set_region_limit_and_restriction(tmp_path: Path) -> None:
+    fake, budget, tools = make_tools(Mode.CONFIRM, answer=True, tmp=tmp_path)
+    region = json.loads(
+        asyncio.run(
+            tools["set_region_limit"].call(
+                {"card_id": "c1", "country": "RUS", "region": "MOS", "limit_type": 2}
+            )
+        )
+    )
+    assert region["status"] == "saved" and fake.saved_regions[0].limit_type == 2
+    restriction = json.loads(
+        asyncio.run(
+            tools["set_restriction"].call(
+                {"card_id": "c1", "product_type": "1-CK231", "restriction_type": 2}
+            )
+        )
+    )
+    assert restriction["status"] == "saved"
+    assert fake.saved_restrictions[0].product_type == "1-CK231"
+    assert budget.spent == 2
+
+
+def test_order_fuel_report_returns_job_ids(tmp_path: Path) -> None:
+    fake, budget, tools = make_tools(Mode.CONFIRM, answer=True, tmp=tmp_path)
+    out = json.loads(
+        asyncio.run(
+            tools["order_fuel_report"].call(
+                {
+                    "date_from": "2026-09-01",
+                    "date_to": "2026-09-30",
+                    "report_format": "xlsx",
+                    "card_ids": ["c1"],
+                }
+            )
+        )
+    )
+    assert out["status"] == "ordered" and out["job_ids"] == ["job1"]
+    assert fake.ordered_reports[0]["start"] == "2026-09-01"
+    assert budget.spent == 1
+
+
+def test_get_report_status_and_access_rules(tmp_path: Path) -> None:
+    _, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path)
+    status = json.loads(asyncio.run(tools["get_report_status"].call({})))
+    assert status["reports"][0]["job_id"] == "job1"
+    rules = json.loads(asyncio.run(tools["get_access_rules"].call({"card_id": "c1"})))
+    assert rules["region_limits"][0]["access"] == "deny"
+    assert rules["restrictions"][0]["product"] == "Топливо"
+    assert budget.spent == 2  # регионы и ограничители платные, лимиты бесплатны
+
+
+def test_diagnose_fueling_returns_checks_and_causes(tmp_path: Path) -> None:
+    _, budget, tools = make_tools(
+        Mode.READ_ONLY, answer=False, tmp=tmp_path, budget_limit=10
+    )
+    out = json.loads(asyncio.run(tools["diagnose_fueling"].call({"card_id": "c1"})))
+    assert out["checks"]["card_status"]["ok"] is True
+    assert out["checks"]["region_limits"]["ok"] is False
+    assert out["checks"]["restrictions"]["ok"] is False
+    assert out["checks"]["contract_balance"]["ok"] is True
+    assert any("регион" in cause for cause in out["likely_causes"])
+    assert budget.spent == 4
+
+
+def test_download_fuel_report_saves_file(tmp_path: Path) -> None:
+    _, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path)
+    out = json.loads(
+        asyncio.run(
+            tools["download_fuel_report"].call({"job_id": "job1", "report_format": "xlsx"})
+        )
+    )
+    assert out["status"] == "downloaded" and out["bytes"] == 4
+    assert Path(out["path"]).is_file() and Path(out["path"]).parent == tmp_path / "reports"
+    assert budget.spent == 1
+
+
+def test_remove_tools_confirm_and_call(tmp_path: Path) -> None:
+    _, budget, tools = make_tools(Mode.CONFIRM, answer=True, tmp=tmp_path, budget_limit=5)
+    for name, args in (
+        ("remove_limit", {"limit_id": "l1"}),
+        ("remove_region_limit", {"region_limit_id": "r1"}),
+        ("remove_restriction", {"restriction_id": "s1"}),
+    ):
+        out = json.loads(asyncio.run(tools[name].call(args)))
+        assert out["status"] == "removed" and out["removed"] is True
+    assert budget.spent == 3
+
+
+def test_remove_tools_are_blocked_in_read_only(tmp_path: Path) -> None:
+    _, _, tools = make_tools(Mode.READ_ONLY, answer=True, tmp=tmp_path)
+    out = json.loads(asyncio.run(tools["remove_limit"].call({"limit_id": "l1"})))
+    assert out["status"] == "not_allowed"
 
 
 def test_claude_md_matches_system_prompt() -> None:
@@ -172,7 +694,7 @@ def test_claude_md_matches_system_prompt() -> None:
 def test_tool_schemas_are_compact() -> None:
     _, _, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=Path("/tmp"))
     size = sum(len(json.dumps(t.to_dict(), ensure_ascii=False)) for t in tools.values())
-    assert size < 6000  # около 2 тыс. токенов на все схемы: короткие инструменты экономят вход
+    assert size < 18000  # ~5–6 тыс. токенов на 25 схем: описания должны оставаться короткими
 
 
 def test_mcp_server_exposes_all_tools() -> None:
@@ -180,8 +702,14 @@ def test_mcp_server_exposes_all_tools() -> None:
 
     names = {t.name for t in asyncio.run(mcp_server.server.list_tools())}
     assert names == {
-        "get_contract_summary", "list_cards", "list_card_groups", "get_limits",
-        "spending_report", "find_suspicious_fills", "get_api_usage", "block_cards", "get_dashboard",
+        "get_account_context", "get_contract_summary", "list_cards", "list_card_groups",
+        "get_card_profile", "get_limits", "get_access_rules", "diagnose_fueling",
+        "spending_report", "list_transactions", "get_transaction_detail",
+        "find_suspicious_fills", "get_finance", "get_report_status",
+        "download_fuel_report", "get_api_usage", "block_cards",
+        "set_card_comment", "set_limit", "set_region_limit", "set_restriction",
+        "order_fuel_report", "remove_limit", "remove_region_limit",
+        "remove_restriction", "get_dashboard",
     }
 
 
@@ -265,6 +793,70 @@ def test_providers_and_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     assert (s.model, s.base_url, s.api_key) == ("deepseek-chat", "https://api.deepseek.com", "k")
     monkeypatch.setenv("AGENT_PROVIDER", "ollama")
     assert Settings.from_env().api_key == "ollama"
+
+
+def test_us_chinese_and_russian_providers_are_available() -> None:
+    from agent.providers import PROVIDERS
+
+    assert {"claude", "openai", "deepseek", "qwen", "yandex", "gigachat", "gateway", "custom"} <= set(PROVIDERS)
+
+
+def test_yandex_model_uri_and_project_come_from_folder(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent.config import Settings
+
+    monkeypatch.setenv("AGENT_PROVIDER", "yandex")
+    monkeypatch.setenv("YANDEX_API_KEY", "k")
+    monkeypatch.setenv("YANDEX_FOLDER_ID", "folder-id")
+    monkeypatch.delenv("AGENT_MODEL", raising=False)
+    s = Settings.from_env()
+    assert (s.model, s.project) == ("gpt://folder-id/yandexgpt/latest", "folder-id")
+    monkeypatch.setenv("AGENT_MODEL", "gpt://other-folder/aliceai-llm")
+    assert Settings.from_env().model == "gpt://other-folder/aliceai-llm"
+
+
+def test_yandex_without_folder_fails_before_any_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent.config import Settings
+    from agent.core import make_llm
+
+    monkeypatch.setenv("AGENT_PROVIDER", "yandex")
+    monkeypatch.setenv("YANDEX_API_KEY", "k")
+    monkeypatch.delenv("YANDEX_FOLDER_ID", raising=False)
+    monkeypatch.delenv("AGENT_MODEL", raising=False)
+    with pytest.raises(RuntimeError, match="YANDEX_FOLDER_ID"):
+        make_llm(Settings.from_env())
+
+
+def test_corporate_gateway_uses_its_own_url_key_and_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent.config import Settings
+    from agent.core import make_llm
+
+    monkeypatch.setenv("AGENT_PROVIDER", "gateway")
+    monkeypatch.setenv("GATEWAY_API_KEY", "k")
+    for name in ("GATEWAY_BASE_URL", "AGENT_BASE_URL", "AGENT_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    with pytest.raises(RuntimeError, match="GATEWAY_BASE_URL"):
+        make_llm(Settings.from_env())
+    monkeypatch.setenv("GATEWAY_BASE_URL", "https://llm-gateway.example.ru/v1")
+    monkeypatch.setenv("AGENT_MODEL", "corp-model")
+    s = Settings.from_env()
+    assert (s.base_url, s.model, s.api_key) == ("https://llm-gateway.example.ru/v1", "corp-model", "k")
+    assert str(make_llm(s).base_url).startswith("https://llm-gateway.example.ru/v1")
+
+
+def test_custom_provider_needs_base_url_and_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent.config import Settings
+    from agent.core import make_llm
+
+    monkeypatch.setenv("AGENT_PROVIDER", "custom")
+    monkeypatch.setenv("AGENT_API_KEY", "k")
+    monkeypatch.delenv("AGENT_BASE_URL", raising=False)
+    monkeypatch.delenv("AGENT_MODEL", raising=False)
+    with pytest.raises(RuntimeError, match="AGENT_BASE_URL"):
+        make_llm(Settings.from_env())
+    monkeypatch.setenv("AGENT_BASE_URL", "https://llm.example.ru/v1")
+    monkeypatch.setenv("AGENT_MODEL", "some-model")
+    client = make_llm(Settings.from_env())
+    assert str(client.base_url).startswith("https://llm.example.ru/v1")
 
 
 def test_openai_loop_calls_tool_then_answers(tmp_path: Path) -> None:

@@ -11,3 +11,13 @@
 {"q": "Сколько потратили в прошлом месяце?", "must_call": ["spending_report"], "must_not_call": ["block_cards"], "expect_args": {"spending_report": {"date_from": "{prev_month_first}", "date_to": "{prev_month_last}"}}}
 {"q": "Дай расходы и подозрительные заправки за август 2026", "must_call": ["spending_report", "find_suspicious_fills"], "must_not_call": ["block_cards"], "expect_args": {"spending_report": {"date_from": "2026-08-01", "date_to": "2026-08-31"}, "find_suspicious_fills": {"date_from": "2026-08-01", "date_to": "2026-08-31"}}}
 {"q": "Заблокируй карту 7826010000000001, водитель уволился", "must_call": ["list_cards"], "must_not_call": [], "expect_args": {"block_cards": {"card_ids": ["c1"]}}}
+{"q": "Какая карта закреплена за Газелью Иванова?", "must_call": ["list_cards"], "must_not_call": ["block_cards"]}
+{"q": "Покажи лимиты по договору", "must_call": ["get_limits"], "must_not_call": ["block_cards"]}
+{"q": "Покажи последние заправки за сентябрь 2026", "must_call": ["list_transactions"], "must_not_call": ["block_cards"], "expect_args": {"list_transactions": {"date_from": "2026-09-01", "date_to": "2026-09-30"}}}
+{"q": "Покажи детали операции 123", "must_call": ["get_transaction_detail"], "must_not_call": ["block_cards"], "expect_args": {"get_transaction_detail": {"transaction_id": "123"}}}
+{"q": "Покажи платежи за сентябрь 2026", "must_call": ["get_finance"], "must_not_call": ["block_cards"], "expect_args": {"get_finance": {"kind": "payments", "date_from": "2026-09-01", "date_to": "2026-09-30"}}}
+{"q": "Покажи закрывающие документы за сентябрь 2026", "must_call": ["get_finance"], "must_not_call": ["block_cards"], "expect_args": {"get_finance": {"kind": "documents", "date_from": "2026-09-01", "date_to": "2026-09-30"}}}
+{"q": "Какая у меня роль и режим работы?", "must_call": ["get_account_context"], "must_not_call": ["block_cards"]}
+{"q": "Почему карта c1 не работает?", "must_call": ["list_cards", "get_limits", "get_contract_summary"], "must_not_call": ["block_cards"]}
+{"q": "Покажи регионы и ограничители по карте c1", "must_call": ["get_access_rules"], "must_not_call": ["block_cards"]}
+{"q": "Какие отчёты уже заказаны?", "must_call": ["get_report_status"], "must_not_call": ["block_cards"]}

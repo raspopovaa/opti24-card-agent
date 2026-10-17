@@ -1,7 +1,7 @@
 """Ядро агента: цикл «модель → инструмент → модель».
 
 Для Claude цикл ведёт Tool Runner из SDK Anthropic, для остальных провайдеров
-(DeepSeek, Qwen, Kimi, GLM, Ollama) — цикл из ``llm_openai.py``. Инструменты,
+(OpenAI, DeepSeek, Qwen, Kimi, GLM, YandexGPT, GigaChat, Ollama) — цикл из ``llm_openai.py``. Инструменты,
 инструкция и предохранители у всех одни и те же.
 """
 
@@ -40,7 +40,18 @@ def make_llm(settings: Settings) -> Any:
             "(русские буквы, «умные» кавычки или пробелы). Ключ состоит только из латиницы и цифр: "
             "скопируйте его заново и задайте так: export ИМЯ='sk-...' обычными кавычками."
         )
-    return AsyncOpenAI(api_key=settings.api_key.strip(), base_url=settings.base_url)
+    if not settings.base_url or not settings.model:
+        url_env = get_provider(settings.provider).base_url_env or "AGENT_BASE_URL"
+        raise RuntimeError(
+            f"Для провайдера {settings.provider} задайте адрес API и модель: "
+            f"переменные {url_env} и AGENT_MODEL"
+        )
+    folder_env = get_provider(settings.provider).folder_env
+    if folder_env and not settings.project:
+        raise RuntimeError(f"Для провайдера {settings.provider} задайте ID каталога: переменная {folder_env}")
+    return AsyncOpenAI(
+        api_key=settings.api_key.strip(), base_url=settings.base_url, project=settings.project or None
+    )
 
 
 @dataclass(slots=True)

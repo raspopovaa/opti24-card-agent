@@ -41,18 +41,25 @@ class Settings:
     max_billable_calls: int
     opti24_env_file: Path
     audit_log: Path
+    project: str = ""  # ID каталога Yandex Cloud; для остальных провайдеров пусто
 
     @classmethod
     def from_env(cls) -> Settings:
         provider_name = os.environ.get("AGENT_PROVIDER", "claude")
         provider = get_provider(provider_name)
+        # Самая дешёвая модель провайдера по умолчанию; поднимать, только если
+        # оценка (evals/) покажет ошибки в выборе инструментов.
+        model = os.environ.get("AGENT_MODEL", provider.default_model)
+        project = os.environ.get(provider.folder_env, "") if provider.folder_env else ""
+        if project and not model.startswith("gpt://"):
+            model = f"gpt://{project}/{model}"
         return cls(
             provider=provider_name,
-            # Самая дешёвая модель провайдера по умолчанию; поднимать, только если
-            # оценка (evals/) покажет ошибки в выборе инструментов.
-            model=os.environ.get("AGENT_MODEL", provider.default_model),
-            base_url=os.environ.get("AGENT_BASE_URL", provider.base_url),
-            # Для Ollama ключ не нужен, но клиент OpenAI требует непустую строку.
+            model=model,
+            base_url=os.environ.get("AGENT_BASE_URL")
+            or (os.environ.get(provider.base_url_env, "") if provider.base_url_env else "")
+            or provider.base_url,
+            # Для Ollama и прокси GigaChat ключ не нужен, но клиент OpenAI требует непустую строку.
             api_key=os.environ.get(provider.key_env, "") if provider.key_env else "ollama",
             effort=os.environ.get("AGENT_EFFORT", "medium"),
             mode=Mode(os.environ.get("AGENT_MODE", Mode.READ_ONLY)),
@@ -64,4 +71,5 @@ class Settings:
                 os.environ.get("OPTI24_ENV_FILE") or default_env_file("demo")
             ).expanduser(),
             audit_log=Path(os.environ.get("AGENT_AUDIT_LOG", "./agent-audit.jsonl")),
+            project=project,
         )

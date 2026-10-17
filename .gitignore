@@ -6,3 +6,4 @@ agent-audit.jsonl
 .env
 .env.*
 !.env.example
+.coverage

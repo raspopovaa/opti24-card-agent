@@ -123,7 +123,7 @@ async def collect(
     else:
         board.api = {
             "Запросов в пакете": info_data.client_info.Queries,
-            "Вызовов API всего": info_data.methods.all,
+            "Вызовов API за месяц": info_data.methods.all,
             "Платных вызовов агента в сессии": budget.spent,
         }
     return board

@@ -27,7 +27,7 @@ import argparse
 import asyncio
 import json
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace as NS
 from typing import Any
@@ -47,19 +47,40 @@ API_ERRORS = (anthropic.APIError, openai.APIError)
 ToolInput = tuple[str, dict[str, Any]]
 
 
+class _Dump:
+    def __init__(self, data: dict[str, object]) -> None:
+        self._data = data
+
+    def model_dump(self) -> dict[str, object]:
+        return self._data
+
+
 class FakeOpti24:
     """Минимально достаточные ответы SDK, чтобы инструменты отработали."""
 
     def __init__(self) -> None:
         async def contract(**_: object) -> NS:
-            data = NS(
+            contract_data = NS(
                 contract_number="DEMO-1",
                 contract_status_name="Действует",
-                balance_amount_limiter="100000.00",
+                balance_amount_limiter=None,
                 current_amount_limiter="50000.00",
-                credit_limit="0",
+                credit_limit=None,
             )
-            return NS(data=NS(contractData=data))
+            balance = NS(
+                available_amount="123139.19",
+                own_balance="1150502.89",
+                consumption_for_month="1202214.25",
+                consumption_for_month_volume="200",
+            )
+            cards_data = NS(cards_quantity_all="2", cards_quantity_active="2")
+            return NS(
+                data=NS(
+                    contractData=contract_data,
+                    balanceData=balance,
+                    cardsData=cards_data,
+                )
+            )
 
         async def groups(**_: object) -> NS:
             item = NS(id="g1", name="Грузовые", cards_count=4)
@@ -79,17 +100,150 @@ class FakeOpti24:
             ]
             return NS(data=NS(result=items, total_count=len(items)))
 
+        async def card_detail(**_: object) -> NS:
+            item = NS(
+                id="c1", number="7826010000000001", status="Active", comment="Газель, Иванов",
+                product="limit", carrier="Plastic", available="9000.00", currency="RUB",
+                date_last_usage=None, servicecenter_last_usage_name="АЗС-1",
+                mpc=False, pin_reset=3, pin_counter=0,
+            )
+            return NS(data=NS(result=[item], total_count=1))
+
+        async def card_drivers(**_: object) -> NS:
+            item = NS(
+                last_name="Иванов", first_name="Иван", middle_name=None,
+                position="Водитель", role="Driver", mobile_phone="+7 900 000-00-00",
+            )
+            return NS(data=NS(result=[item], total_count=1))
+
+        async def limits(**_: object) -> NS:
+            item = NS(
+                id="l1", card_id="c1", group_id=None, productType="1-CK231", productGroup=None,
+                amount=None, sum=_Dump({"value": 9000.0, "used": 231.46, "currency": "810"}),
+                term=None, transactions=None, time=NS(number=1, type=5),
+            )
+            return NS(data=NS(result=[item], total_count=1))
+
+        async def dictionary(**_: object) -> NS:
+            item = NS(id="1-CK231", name="Топливо", value=None)
+            return NS(data=NS(result=[item], total_count=1))
+
+        async def transaction_detail(**_: object) -> NS:
+            item = NS(
+                id="t1", timestamp=datetime(2026, 9, 1, 12, 0), card_id="c1",
+                card_number="7826010000000001", poi_id="p1", terminal_id="t1", check_id="1",
+                type="P", product_name="ДТ", qty=100, price="60.00", sum="6000.00",
+                discount="0", is_storno=False, is_manual_correction=False,
+            )
+            return NS(data=NS(result=[item], total_count=1))
+
+        async def payments(**_: object) -> NS:
+            item = NS(
+                id="p1", date="2026-09-02T10:00:00", amount="1000.00",
+                amount_client="1000.00", currency="810;RUR", description="Оплата",
+                payment_name="Платёж", payment_number="1",
+            )
+            return NS(data=NS(result=[item], total_count=1))
+
+        async def invoices(**_: object) -> NS:
+            item = NS(
+                id="i1", ref_number="СЧ-1", date_start="2026-09-01", date_end="2026-09-30",
+                amount="5000.00", paid_amount="0.00", status="OPEN", comment=None,
+            )
+            return NS(data=NS(result=[item], total_count=1))
+
+        async def documents(**_: object) -> NS:
+            item = NS(
+                id="d1", name="УПД", number="1", date=1756684800, total=1200.0,
+                vat=200.0, sum=1000.0, currency="руб.", consignee="ООО Ромашка",
+            )
+            return NS(data=NS(result=[item], total_count=1))
+
+        async def region_limits(**_: object) -> NS:
+            item = NS(
+                id="r1", card_id="c1", group_id=None, country="RUS", region="MOS",
+                service_center=None, partner=None, limit_type=2, date="2026-09-01",
+            )
+            return NS(data=NS(result=[item], total_count=1))
+
+        async def restrictions(**_: object) -> NS:
+            item = NS(
+                id="s1", card_id="c1", group_id=None, productType="1-CK231",
+                productTypeName="Топливо", productGroup=None, productGroupName=None,
+                restriction_type=2, date="2026-09-01",
+            )
+            return NS(data=NS(result=[item], total_count=1))
+
+        async def report_jobs(**_: object) -> NS:
+            item = NS(
+                job_id="job1", date="2026-09-01", report_name="Транзакции",
+                report_format="xlsx", contract_id="c1", client_id="cl1", user_id="u1",
+            )
+            return NS(data=[item])
+
+        async def set_card_comment(**_: object) -> NS:
+            return NS(data=True)
+
+        async def set_limit(**_: object) -> NS:
+            return NS(data=["l1"])
+
+        async def set_region_limit(**_: object) -> NS:
+            return NS(data=["r1"])
+
+        async def set_restriction(**_: object) -> NS:
+            return NS(data=["s1"])
+
+        async def order_report_v1(**_: object) -> NS:
+            return NS(data=["job1"])
+
+        async def auth_user(**_: object) -> NS:
+            contract_info = NS(id="c1", number="DEMO-1", cards_count=2)
+            data = NS(
+                contracts=[contract_info], org_name="ООО Ромашка",
+                role_name="Администратор", read_only=False,
+            )
+            return NS(data=data)
+
         async def info(**_: object) -> NS:
             return NS(
-                data=NS(client_info=NS(Queries=500), methods=NS(all=12)),
+                data=NS(
+                    from_=datetime(2026, 10, 1),
+                    to=datetime(2026, 11, 1),
+                    client_info=NS(Queries=500),
+                    methods=NS(all=12),
+                ),
             )
 
-        self.contracts = NS(get_contract_data=contract)
+        self.contracts = NS(
+            get_contract_data=contract,
+            get_payments=payments,
+            get_invoices=invoices,
+            get_documents=documents,
+        )
         self.card_groups = NS(get_card_groups=groups)
-        self.cards = NS(get_cards_v2=cards)
-        self.limits = NS(get_limits=empty)
-        self.transactions = NS(get_transactions_v2=empty, get_card_transactions_v2=empty)
-        self.auth = NS(get_info=info)
+        self.cards = NS(
+            get_cards_v2=cards,
+            get_card_detail=card_detail,
+            get_card_drivers=card_drivers,
+            set_card_comment=set_card_comment,
+        )
+        self.limits = NS(get_limits=limits, set_limit=set_limit)
+        self.region_limits = NS(
+            get_region_limits=region_limits, set_region_limit=set_region_limit
+        )
+        self.restrictions = NS(
+            get_restrictions=restrictions, set_restriction=set_restriction
+        )
+        self.reports = NS(
+            order_report_v1=order_report_v1, get_report_job_list_v1=report_jobs
+        )
+        self.dictionaries = NS(get_dictionary=dictionary)
+        self.transactions = NS(
+            get_transactions_v2=empty,
+            get_card_transactions_v2=empty,
+            get_transaction_detail=transaction_detail,
+        )
+        self.auth = NS(auth_user=auth_user, get_info=info)
 
 
 async def never(_: str) -> bool:

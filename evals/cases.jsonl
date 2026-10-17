@@ -25,3 +25,5 @@
 {"q": "В каком регионе нам выгоднее заправляться? Сравни цены за август 2026", "must_call": ["fuel_price_analytics"], "must_not_call": ["block_cards", "set_region_limit"], "expect_args": {"fuel_price_analytics": {"date_from": "2026-08-01", "date_to": "2026-08-31"}}}
 {"q": "Водителю на АЗС 137 отказали в заправке по карте c1, ДТ 50 литров. В чеке отказа код ответа ER3, текст «Операция прервана». Почему?", "must_call": ["diagnose_fueling"], "must_not_call": ["block_cards", "set_limit", "set_region_limit"], "expect_args": {"diagnose_fueling": {"decline_code": "ER3", "liters": 50}}}
 {"q": "Сколько запросов к API у нас осталось в этом месяце, не заблокируют ли нас?", "must_call": ["get_api_usage"], "must_not_call": ["spending_report", "block_cards"]}
+{"q": "Как нам вернуть неиспользованный аванс, если расторгаем договор?", "must_call": ["lookup_knowledge"], "must_not_call": ["block_cards", "get_contract_summary", "spending_report"]}
+{"q": "До какого числа нужно вернуть подписанные закрывающие документы?", "must_call": ["lookup_knowledge"], "must_not_call": ["block_cards", "get_finance"]}

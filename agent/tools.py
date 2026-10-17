@@ -40,6 +40,8 @@ from apisdkopti24.models.restrictions import RestrictionRequestItem
 from .analysis import AnomalyRules, find_anomalies, summarize
 from .analysis import fuel_price_analytics as price_analytics
 from .config import Mode
+from .knowledge import load_sections
+from .knowledge import search as search_knowledge
 from .money import rub, to_decimal
 from .pricing import TERMS_EDITION, configured_service_fee, service_fee_for_volume, tiers_payload
 from .safety import ApprovalGate, BillingBudget, BudgetExceededError
@@ -163,6 +165,8 @@ def build_tools(
     ).expanduser()
 
     monthly_quota = int(os.environ.get("OPTI24_MONTHLY_QUOTA", DEFAULT_MONTHLY_QUOTA))
+    # Выжимки договора маленькие и читаются один раз при старте, а не в асинхронном пути.
+    knowledge = load_sections()
 
     def quota_payload(info: Any) -> dict[str, object]:
         """Расход месячного пакета; бюджет сессии не больше остатка, чтобы не довести до блокировки."""
@@ -966,6 +970,26 @@ def build_tools(
         )
 
     @beta_async_tool
+    async def lookup_knowledge(question: str) -> str:
+        """Условия договора топливных карт: цены, скидки, сбор, блокировка, отказ, документы, претензии, API.
+
+        Ищет по выжимкам договора; бесплатно, без запросов к API. Возвращает разделы
+        с источником и редакцией.
+
+        Args:
+            question: Вопрос клиента или ключевые слова, например "вернуть аванс".
+        """
+        found = search_knowledge(knowledge, question)
+        if not found:
+            return _json(
+                {
+                    "found": 0,
+                    "message": "В базе знаний ответа нет: направь к менеджеру по договору или на горячую линию.",
+                }
+            )
+        return _json({"found": len(found), "sections": found})
+
+    @beta_async_tool
     async def get_api_usage() -> str:
         """Месячный пакет запросов API, расход и остаток до блокировки. Бесплатно."""
         try:
@@ -1699,6 +1723,7 @@ def build_tools(
         get_finance,
         get_report_status,
         download_fuel_report,
+        lookup_knowledge,
         get_api_usage,
     ]
     write_tools = [

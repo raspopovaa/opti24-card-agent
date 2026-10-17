@@ -1,0 +1,107 @@
+{
+  "sources": [
+    {
+      "id": "supply-offer",
+      "title": "Оферта к заключению договора поставки товара по топливным картам (с Приложением № 1)",
+      "url": "https://cdn.opti-24.ru/upload/dogovor.pdf",
+      "site_section": null,
+      "files": [
+        "dogovor*.pdf"
+      ],
+      "topics": [
+        "pricing.md",
+        "card-service.md",
+        "contract-support.md"
+      ],
+      "sha256": "bf6ce3103661c94d3eb2b0ec7c5ee26ccf1f03dafce4559374cae73f935d2d4e",
+      "accepted": "2026-10-18"
+    },
+    {
+      "id": "api-offer",
+      "title": "Оферта на предоставление доступа к API ЛК ОПТИ 24",
+      "url": null,
+      "site_section": "opti-24.ru → раздел «API»",
+      "files": [
+        "api_dogovor*.doc",
+        "api_dogovor*.docx",
+        "api_dogovor*.pdf"
+      ],
+      "topics": [
+        "api-access.md"
+      ],
+      "sha256": "e139ee8105d443b0f9d4177ee380bd5b07ba534cd9afffed3a2e2885d8d049ae",
+      "accepted": "2026-10-18"
+    },
+    {
+      "id": "api-tariffs",
+      "title": "Стоимость предоставления доступа к функционалу API ЛК ОПТИ 24 (тарифы)",
+      "url": "http://cdn.opti-24.ru/upload/api_prices.docx",
+      "site_section": null,
+      "files": [
+        "api_prices*.docx"
+      ],
+      "topics": [
+        "api-access.md"
+      ],
+      "sha256": "7ac69fd7abed3f1e64d5cdf1dc73e01e3a91863de0d3062c901d58040d75dce4",
+      "accepted": "2026-10-18"
+    },
+    {
+      "id": "card-instruction",
+      "title": "Приложение № 4 — Инструкция по использованию Карты (ожидаются коды отказа)",
+      "url": null,
+      "site_section": "opti-24.ru → Клиентам → Документы",
+      "files": [
+        "*нструкци*.pdf",
+        "*instrukci*.pdf"
+      ],
+      "topics": [
+        "card-service.md"
+      ],
+      "sha256": null,
+      "accepted": null
+    },
+    {
+      "id": "goods-restrictions",
+      "title": "Приложение № 2 — Основные параметры товарных ограничителей",
+      "url": null,
+      "site_section": "opti-24.ru → Клиентам → Документы",
+      "files": [
+        "*граничител*.pdf"
+      ],
+      "topics": [
+        "card-service.md"
+      ],
+      "sha256": null,
+      "accepted": null
+    },
+    {
+      "id": "service-list",
+      "title": "Приложение № 12 — Перечень сервисных услуг",
+      "url": null,
+      "site_section": "opti-24.ru → Клиентам → Документы",
+      "files": [
+        "*ервисн*.pdf"
+      ],
+      "topics": [
+        "pricing.md"
+      ],
+      "sha256": null,
+      "accepted": null
+    },
+    {
+      "id": "drive-stations",
+      "title": "Перечень АЗС тарифа Drive для ДТ (к таблице 1.2 Приложения № 1)",
+      "url": "https://cdn.opti-24.ru/upload/AZS_Tatifa_Drive_DT_16.10.xlsx",
+      "site_section": null,
+      "files": [
+        "AZS_Tatifa_Drive_DT*.xlsx"
+      ],
+      "topics": [
+        "pricing.md"
+      ],
+      "sha256": null,
+      "accepted": null
+    }
+  ]
+}

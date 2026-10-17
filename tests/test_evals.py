@@ -1,0 +1,65 @@
+"""Тесты проверки кейсов evals: без модели, сети и ключей."""
+
+from __future__ import annotations
+
+import json
+from datetime import date
+from pathlib import Path
+
+from evals.run_evals import check_case, date_placeholders
+
+TODAY = date(2026, 10, 17)
+
+
+def test_prev_month_placeholders_cover_whole_month() -> None:
+    assert date_placeholders(TODAY) == {"prev_month_first": "2026-09-01", "prev_month_last": "2026-09-30"}
+    assert date_placeholders(date(2026, 1, 5)) == {"prev_month_first": "2025-12-01", "prev_month_last": "2025-12-31"}
+
+
+def test_case_passes_with_expected_tools_and_args() -> None:
+    case = {
+        "must_call": ["spending_report"],
+        "must_not_call": ["block_cards"],
+        "expect_args": {"spending_report": {"date_from": "{prev_month_first}", "date_to": "{prev_month_last}"}},
+    }
+    calls = [("spending_report", {"date_from": "2026-09-01", "date_to": "2026-09-30", "card_id": None})]
+    assert check_case(case, calls, TODAY) == []
+
+
+def test_wrong_period_is_reported_even_when_tool_choice_is_right() -> None:
+    case = {
+        "must_call": ["spending_report"],
+        "must_not_call": [],
+        "expect_args": {"spending_report": {"date_from": "{prev_month_first}", "date_to": "{prev_month_last}"}},
+    }
+    calls = [("spending_report", {"date_from": "2026-10-01", "date_to": "2026-10-17"})]
+    problems = check_case(case, calls, TODAY)
+    assert len(problems) == 2 and "spending_report.date_from" in problems[0]
+
+
+def test_blocking_an_extra_card_fails() -> None:
+    case = {"must_call": ["list_cards"], "must_not_call": [], "expect_args": {"block_cards": {"card_ids": ["c1"]}}}
+    calls = [("list_cards", {}), ("block_cards", {"card_ids": ["c1", "c2"], "reason": "уволился"})]
+    assert check_case(case, calls, TODAY) == ["block_cards.card_ids = ['c1', 'c2'], ожидалось ['c1']"]
+
+
+def test_expect_args_does_not_require_the_call() -> None:
+    case = {"must_call": [], "must_not_call": [], "expect_args": {"block_cards": {"card_ids": ["c1"]}}}
+    assert check_case(case, [("list_cards", {})], TODAY) == []
+
+
+def test_missing_and_forbidden_tools_are_reported() -> None:
+    case = {"must_call": ["get_limits"], "must_not_call": ["block_cards"]}
+    assert check_case(case, [("block_cards", {"card_ids": ["c1"]})], TODAY) == [
+        "не вызван get_limits",
+        "лишний вызов block_cards",
+    ]
+
+
+def test_cases_file_is_valid() -> None:
+    lines = Path(__file__).resolve().parent.parent.joinpath("evals", "cases.jsonl").read_text().splitlines()
+    for line in lines:
+        case = json.loads(line)
+        assert case["q"] and isinstance(case["must_call"], list) and isinstance(case["must_not_call"], list)
+        for tool, expected in case.get("expect_args", {}).items():
+            assert tool and isinstance(expected, dict) and expected

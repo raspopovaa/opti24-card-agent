@@ -9,6 +9,9 @@
 * Изменяющий инструмент спрашивает человека через ``ApprovalGate``.
 * Ошибка не роняет агента: инструмент возвращает понятный текст ошибки,
   и модель может объяснить её пользователю или попробовать другой путь.
+* Платные данные не запрашиваются дважды: операции за период кешируются на
+  сессию, и ``spending_report`` с ``find_suspicious_fills`` за тот же период
+  стоят как один запрос.
 """
 
 from __future__ import annotations
@@ -109,6 +112,16 @@ async def load_transactions(
 def build_tools(client: APIClient, budget: BillingBudget, gate: ApprovalGate) -> list[Any]:
     """Собирает инструменты, привязанные к клиенту, бюджету и подтверждению."""
 
+    # Операции за период: (date_from, date_to, card_id) -> список. Живёт столько же,
+    # сколько бюджет сессии, поэтому повторный вопрос о том же периоде бесплатен.
+    tx_cache: dict[tuple[str, str, str | None], list[Any]] = {}
+
+    async def transactions(date_from: str, date_to: str, card_id: str | None) -> list[Any]:
+        key = (date_from, date_to, card_id or None)
+        if key not in tx_cache:
+            tx_cache[key], _ = await load_transactions(client, budget, date_from, date_to, card_id)
+        return tx_cache[key]
+
     @beta_async_tool
     async def get_contract_summary() -> str:
         """Баланс, кредитный лимит и статус договора. Платный запрос API (1 шт.)."""
@@ -131,7 +144,10 @@ def build_tools(client: APIClient, budget: BillingBudget, gate: ApprovalGate) ->
     async def list_cards(
         status: str | None = None, group_id: str | None = None, query: str | None = None
     ) -> str:
-        """Список топливных карт договора. Бесплатный запрос API.
+        """Список топливных карт договора: ID, номер, статус, группа, комментарий. Бесплатно.
+
+        Нужен, чтобы найти ID карты для get_limits, spending_report и block_cards.
+        Показывает не больше 25 карт; если total больше shown, сузь фильтр.
 
         Args:
             status: Фильтр по статусу, например "Active" (активна) или "Blocked".
@@ -145,10 +161,17 @@ def build_tools(client: APIClient, budget: BillingBudget, gate: ApprovalGate) ->
         except (APIError, RequestValidationError) as exc:
             return _error(exc)
         cards = response.data.result or []
+        total = response.data.total_count
+        hint = (
+            {"hint": "Показана часть карт: уточни query, status или group_id."}
+            if total and total > len(cards)
+            else {}
+        )
         return _json(
             {
-                "total": response.data.total_count,
+                "total": total,
                 "shown": len(cards),
+                **hint,
                 "cards": [
                     {
                         "id": c.id,
@@ -184,6 +207,10 @@ def build_tools(client: APIClient, budget: BillingBudget, gate: ApprovalGate) ->
             card_id: ID карты.
             group_id: ID группы карт. Нужно указать что-то одно из двух.
         """
+        if bool(card_id) == bool(group_id):
+            return _json(
+                {"error": "bad_request", "message": "Укажи либо card_id, либо group_id (одно из двух)."}
+            )
         try:
             response = await client.limits.get_limits(card_id=card_id, group_id=group_id)
         except (APIError, RequestValidationError) as exc:
@@ -204,10 +231,11 @@ def build_tools(client: APIClient, budget: BillingBudget, gate: ApprovalGate) ->
 
     @beta_async_tool
     async def spending_report(date_from: str, date_to: str, card_id: str | None = None) -> str:
-        """Сводка расходов за период: сумма, литры, цена литра, топ карт.
+        """Сводка расходов за период: сумма, литры и цена литра по топливу, топ-5 карт.
 
         Платный запрос API: 1 запрос на каждую страницу из 100 операций.
-        Период не больше месяца.
+        Период не больше месяца. Повторный вызов за тот же период (и
+        find_suspicious_fills за него) бесплатен: операции уже загружены.
 
         Args:
             date_from: Начало периода, ГГГГ-ММ-ДД.
@@ -217,7 +245,7 @@ def build_tools(client: APIClient, budget: BillingBudget, gate: ApprovalGate) ->
         if problem := _check_dates(date_from, date_to):
             return _json({"error": "bad_dates", "message": problem})
         try:
-            items, _ = await load_transactions(client, budget, date_from, date_to, card_id)
+            items = await transactions(date_from, date_to, card_id)
         except (APIError, BudgetExceededError, RequestValidationError, TransactionsUnavailableError) as exc:
             return _error(exc)
         return _json({"period": f"{date_from}…{date_to}", **summarize(items)})
@@ -226,8 +254,9 @@ def build_tools(client: APIClient, budget: BillingBudget, gate: ApprovalGate) ->
     async def find_suspicious_fills(date_from: str, date_to: str, card_id: str | None = None) -> str:
         """Подозрительные заправки за период: дорогие, ночные, крупные, частые.
 
-        Платный запрос API: 1 запрос на каждую страницу из 100 операций.
-        Правила проверки заданы в коде, а не придуманы моделью.
+        Платный запрос API: 1 запрос на каждую страницу из 100 операций; за
+        период, уже загруженный spending_report, бесплатно. Правила проверки
+        заданы в коде и приходят в поле rules: пересказывай их, а не придумывай.
 
         Args:
             date_from: Начало периода, ГГГГ-ММ-ДД.
@@ -237,7 +266,7 @@ def build_tools(client: APIClient, budget: BillingBudget, gate: ApprovalGate) ->
         if problem := _check_dates(date_from, date_to):
             return _json({"error": "bad_dates", "message": problem})
         try:
-            items, _ = await load_transactions(client, budget, date_from, date_to, card_id)
+            items = await transactions(date_from, date_to, card_id)
         except (APIError, BudgetExceededError, RequestValidationError, TransactionsUnavailableError) as exc:
             return _error(exc)
         return _json(find_anomalies(items, AnomalyRules()))
@@ -269,6 +298,7 @@ def build_tools(client: APIClient, budget: BillingBudget, gate: ApprovalGate) ->
             card_ids: ID карт (из list_cards), не больше 10.
             reason: Причина блокировки одной фразой, для журнала.
         """
+        card_ids = list(dict.fromkeys(str(c).strip() for c in card_ids or [] if str(c).strip()))
         if not card_ids or len(card_ids) > 10:
             return _json({"error": "bad_request", "message": "Нужно от 1 до 10 карт."})
         if gate.mode is Mode.READ_ONLY:
@@ -283,7 +313,8 @@ def build_tools(client: APIClient, budget: BillingBudget, gate: ApprovalGate) ->
             )
         approved = await gate.approve(
             "block_cards",
-            f"Заблокировать карт: {len(card_ids)}. Причина: {reason}",
+            # Человек видит, какие именно карты блокируются; в журнал ID не попадают.
+            f"Заблокировать карт: {len(card_ids)} ({', '.join(card_ids)}). Причина: {reason}",
             len(card_ids),
         )
         if not approved:

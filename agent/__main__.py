@@ -3,6 +3,7 @@
 Примеры:
     python -m agent                              # Claude Haiku 5.5 (нужен ANTHROPIC_API_KEY)
     python -m agent --provider deepseek          # ключ в DEEPSEEK_API_KEY
+    python -m agent --provider yandex            # YANDEX_API_KEY и YANDEX_FOLDER_ID
     python -m agent --provider ollama --model qwen3:8b   # локально, бесплатно
     python -m agent --no-dashboard
 """

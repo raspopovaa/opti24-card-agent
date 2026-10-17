@@ -1,4 +1,4 @@
-"""Цикл агента для OpenAI-совместимых API (DeepSeek, Qwen, Kimi, GLM, Ollama).
+"""Цикл агента для OpenAI-совместимых API (OpenAI, DeepSeek, Qwen, YandexGPT, GigaChat, Ollama и др.).
 
 У Claude цикл «модель → инструмент → модель» пишет Tool Runner из SDK Anthropic.
 Для остальных провайдеров тот же цикл занимает полсотни строк: это и есть суть

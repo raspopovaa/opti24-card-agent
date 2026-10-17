@@ -1,8 +1,11 @@
 """Провайдеры моделей: Claude и любые модели с OpenAI-совместимым API.
 
-Китайские провайдеры (DeepSeek, Qwen, Kimi, GLM) отдают OpenAI-совместимый
-интерфейс, поэтому для них нужен один общий цикл (``llm_openai.py``). Меняется
-только адрес, ключ и имя модели.
+Американские (Anthropic Claude, OpenAI), китайские (DeepSeek, Qwen, Kimi, GLM) и
+российские (YandexGPT, GigaChat) модели подключаются одинаково. Все, кроме
+Claude, отдают OpenAI-совместимый интерфейс, поэтому для них нужен один общий
+цикл (``llm_openai.py``). Меняется только адрес, ключ и имя модели. GigaChat
+работает через прокси gpt2giga, который запускается рядом с агентом. Любой
+другой OpenAI-совместимый API подключается провайдером ``custom``.
 
 Названия моделей у провайдеров меняются каждые несколько месяцев. Значения
 ниже — стартовые; актуальное имя берите в документации провайдера и задавайте
@@ -26,10 +29,18 @@ class Provider:
     key_env: str  # переменная окружения с ключом ("" — ключ не нужен)
     base_url: str = ""
     note: str = ""
+    # Переменная с ID каталога Yandex Cloud: он входит в имя модели
+    # (gpt://<каталог>/<модель>) и передаётся в заголовке проекта.
+    folder_env: str = ""
+    # Переменная с адресом API, если у провайдера нет общего адреса (корпоративный шлюз).
+    base_url_env: str = ""
 
 
 PROVIDERS: dict[str, Provider] = {
+    # США
     "claude": Provider("anthropic", "claude-haiku-5-5", "ANTHROPIC_API_KEY", note="Anthropic"),
+    "openai": Provider("openai", "gpt-4.1-mini", "OPENAI_API_KEY", "https://api.openai.com/v1", "OpenAI"),
+    # Китай
     "deepseek": Provider(
         "openai", "deepseek-chat", "DEEPSEEK_API_KEY", "https://api.deepseek.com", "DeepSeek"
     ),
@@ -46,6 +57,26 @@ PROVIDERS: dict[str, Provider] = {
     "glm": Provider(
         "openai", "glm-4.6", "ZHIPUAI_API_KEY", "https://open.bigmodel.cn/api/paas/v4", "Zhipu GLM"
     ),
+    # Россия
+    "yandex": Provider(
+        "openai",
+        "yandexgpt/latest",
+        "YANDEX_API_KEY",
+        "https://ai.api.cloud.yandex.net/v1",
+        "YandexGPT (Yandex AI Studio)",
+        folder_env="YANDEX_FOLDER_ID",
+    ),
+    "gigachat": Provider(
+        "openai", "GigaChat-2-Max", "", "http://localhost:8090/v1", "GigaChat через локальный прокси gpt2giga"
+    ),
+    # Корпоративный шлюз LiteLLM платформы N1 (с цензором): только модели компании.
+    # Адрес шлюза и имя модели у каждой компании свои, поэтому не зашиты.
+    "n1": Provider(
+        "openai", "", "N1_API_KEY", "", "Корпоративный шлюз LiteLLM платформы N1", base_url_env="N1_BASE_URL"
+    ),
+    # Любой OpenAI-совместимый API: адрес и модель задаются AGENT_BASE_URL и AGENT_MODEL.
+    "custom": Provider("openai", "", "AGENT_API_KEY", "", "Любой OpenAI-совместимый API"),
+    # Локально
     "ollama": Provider(
         "openai", "qwen3:8b", "", "http://localhost:11434/v1", "Локальная модель через Ollama, бесплатно"
     ),

@@ -1,0 +1,5 @@
+anthropic>=1.15
+openai>=1.50
+rich>=13
+apisdkopti24==0.0.4
+mcp<2

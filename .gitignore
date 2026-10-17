@@ -1,0 +1,8 @@
+__pycache__/
+.pytest_cache/
+*.jsonl.log
+agent-audit.jsonl
+.env
+.env
+.env.*
+!.env.example

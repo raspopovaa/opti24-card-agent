@@ -793,7 +793,7 @@ def test_mcp_server_exposes_all_tools() -> None:
         "get_card_profile", "get_limits", "get_access_rules", "diagnose_fueling",
         "spending_report", "list_transactions", "get_transaction_detail",
         "find_suspicious_fills", "fuel_price_analytics", "get_finance", "get_report_status",
-        "download_fuel_report", "get_api_usage", "block_cards",
+        "download_fuel_report", "lookup_knowledge", "get_api_usage", "block_cards",
         "set_card_comment", "set_limit", "set_region_limit", "set_restriction",
         "order_fuel_report", "remove_limit", "remove_region_limit",
         "remove_restriction", "get_dashboard",

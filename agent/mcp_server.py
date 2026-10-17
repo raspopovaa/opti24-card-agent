@@ -74,7 +74,12 @@ def _register() -> None:
         Платные запросы API: 1 на договор и до 3 на операции с начала месяца.
         Показывай пользователю как короткую сводку, а не пересказывай все поля.
         """
-        board = await collect(await _get_client(), budget, date.today())  # type: ignore[arg-type]
+        try:
+            board = await collect(await _get_client(), budget, date.today())  # type: ignore[arg-type]
+        except Exception as exc:  # noqa: BLE001 — ошибку отдаём модели, а не роняем сервер
+            return json.dumps(
+                {"error": type(exc).__name__, "message": str(exc)[:300]}, ensure_ascii=False
+            )
         return json.dumps(asdict(board), ensure_ascii=False, default=str)
 
 

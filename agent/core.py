@@ -52,6 +52,7 @@ class FuelCardAgent:
     usage: Usage = field(default_factory=Usage)
     history: list[dict[str, Any]] = field(default_factory=list)
     tool_calls: list[str] = field(default_factory=list)  # для оценки выбора инструментов
+    tool_inputs: list[tuple[str, dict[str, Any]]] = field(default_factory=list)  # и их аргументов
     budget: BillingBudget = field(init=False)
     gate: ApprovalGate = field(init=False)
     tools: list[Any] = field(init=False)
@@ -85,7 +86,8 @@ class FuelCardAgent:
                 self.settings.max_iterations,
                 self.usage,
             )
-            self.tool_calls += called
+            self.tool_calls += [name for name, _ in called]
+            self.tool_inputs += called
 
         # В историю кладём только вопрос и итоговый ответ. Тяжёлые результаты
         # инструментов остаются за кадром, и следующий вопрос стоит дешевле.
@@ -107,7 +109,9 @@ class FuelCardAgent:
         final_text = ""
         async for message in runner:
             self.usage.add_anthropic(message.usage)
-            self.tool_calls += [b.name for b in message.content if b.type == "tool_use"]
+            uses = [b for b in message.content if b.type == "tool_use"]
+            self.tool_calls += [b.name for b in uses]
+            self.tool_inputs += [(b.name, dict(b.input)) for b in uses]
             texts = [block.text for block in message.content if block.type == "text"]
             if texts:
                 final_text = "\n".join(texts)

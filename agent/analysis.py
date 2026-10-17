@@ -167,5 +167,6 @@ def find_anomalies(
             "price_tolerance_percent": str(rules.price_tolerance * 100),
             "max_fills_per_day": rules.max_fills_per_day,
             "max_liters_per_fill": str(rules.max_liters_per_fill),
+            "night_hours": f"{rules.night_hours.start:02d}:00–{rules.night_hours.stop - 1:02d}:59",
         },
     }

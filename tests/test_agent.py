@@ -297,7 +297,7 @@ def test_openai_loop_calls_tool_then_answers(tmp_path: Path) -> None:
     text, called = asyncio.run(
         run_openai_loop(llm, "m", "sys", [{"role": "user", "content": "q"}], list(tools.values()), 5, usage)
     )
-    assert text == "Готово" and called == ["get_api_usage"]
+    assert text == "Готово" and called == [("get_api_usage", {})]
     assert steps == ["user", "tool"] and usage.requests == 2 and usage.input_tokens == 200
 
 
@@ -472,3 +472,10 @@ def test_web_server_pages_chat_and_origin_checks(monkeypatch) -> None:
     assert b"404" in missing
     assert "ответ: привет".encode() in chat_ok or b"\\u043e" in chat_ok
     assert b"404" in bad_origin and b"404" in bad_host
+
+
+def test_openai_tool_args_tolerate_broken_json() -> None:
+    from agent.llm_openai import parse_tool_args
+
+    assert parse_tool_args('{"card_id": "c1"}') == {"card_id": "c1"}
+    assert parse_tool_args("{oops") == {} and parse_tool_args("[1]") == {} and parse_tool_args(None) == {}

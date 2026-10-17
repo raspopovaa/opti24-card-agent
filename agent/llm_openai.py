@@ -34,6 +34,15 @@ def to_openai_tools(tools: Sequence[Any]) -> list[dict[str, Any]]:
     return result
 
 
+def parse_tool_args(raw_args: str | None) -> dict[str, Any]:
+    """Аргументы вызова из JSON модели; битый JSON или не-объект — пустой словарь."""
+    try:
+        parsed = json.loads(raw_args or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 async def _run_tool(tools: dict[str, Any], name: str, raw_args: str) -> str:
     tool = tools.get(name)
     if tool is None:
@@ -55,12 +64,12 @@ async def run_openai_loop(
     tools: Sequence[Any],
     max_iterations: int,
     usage: UsageSink,
-) -> tuple[str, list[str]]:
-    """Возвращает итоговый текст и список имён вызванных инструментов."""
+) -> tuple[str, list[tuple[str, dict[str, Any]]]]:
+    """Возвращает итоговый текст и вызванные инструменты: (имя, аргументы)."""
     by_name = {t.name: t for t in tools}
     schemas = to_openai_tools(tools)
     conversation: list[dict[str, Any]] = [{"role": "system", "content": system}, *messages]
-    called: list[str] = []
+    called: list[tuple[str, dict[str, Any]]] = []
     text = ""
 
     for _ in range(max_iterations):
@@ -86,7 +95,7 @@ async def run_openai_loop(
             *(_run_tool(by_name, c.function.name, c.function.arguments) for c in calls)
         )
         for call, output in zip(calls, results, strict=True):
-            called.append(call.function.name)
+            called.append((call.function.name, parse_tool_args(call.function.arguments)))
             conversation.append({"role": "tool", "tool_call_id": call.id, "content": output})
 
     return text or "Достигнут предел шагов агента: уточните вопрос.", called

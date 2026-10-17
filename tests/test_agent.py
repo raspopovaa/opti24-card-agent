@@ -684,7 +684,11 @@ def test_diagnose_follows_decline_receipt_and_station(tmp_path: Path) -> None:
         "poi_id": "azs-1", "product": "дт", "liters": 50,
     }
     out = json.loads(asyncio.run(tools["diagnose_fueling"].call(args)))
-    assert out["receipt"] == {"decline_code": "ER3", "decline_text": "Операция прервана"}
+    receipt = out["receipt"]
+    assert (receipt["decline_code"], receipt["decline_text"]) == ("ER3", "Операция прервана")
+    # ER3 нет в таблице Приложения № 4: «прочие коды ответа» — к персоналу АЗС.
+    assert receipt["decoded"]["in_table"] is False and "персонал" in receipt["decoded"]["terminal_message"]
+    assert out["likely_causes"][0].startswith("по коду ответа ER3")
     assert purchases == [
         {"card_id": "c1", "poi_id": "azs-1", "goods": [{"code": "DT", "quantity": 50.0, "price": 65.5}]}
     ]
@@ -732,6 +736,17 @@ def test_diagnose_finds_station_by_number_from_receipt(tmp_path: Path) -> None:
     out = json.loads(asyncio.run(tools["diagnose_fueling"].call(args)))
     assert searches == [{"id": "АЗС 137"}, {"q": "АЗС 137", "onpage": 2}]
     assert purchases[0]["poi_id"] == "poi-137" and out["checks"]["check_purchase"]["allowed"] is True
+
+
+def test_diagnose_decodes_known_code_and_flags_mismatch_with_checks(tmp_path: Path) -> None:
+    _, _, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, budget_limit=10)
+    out = json.loads(asyncio.run(tools["diagnose_fueling"].call({"card_id": "c1", "decline_code": "51"})))
+    decoded = out["receipt"]["decoded"]
+    assert decoded["in_table"] is True and decoded["related_check"] == "contract_balance"
+    assert out["likely_causes"][0] == "по коду ответа 51 из чека: не хватает денег на счёте договора"
+    assert out["next_steps"][0] == "Пополнить счёт договора."
+    # Сейчас баланс положительный: агент должен сказать, что состояние могло измениться.
+    assert "пополнили" in decoded["note"]
 
 
 def test_diagnose_pin_in_receipt_text_becomes_a_cause(tmp_path: Path) -> None:

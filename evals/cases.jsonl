@@ -27,3 +27,4 @@
 {"q": "Сколько запросов к API у нас осталось в этом месяце, не заблокируют ли нас?", "must_call": ["get_api_usage"], "must_not_call": ["spending_report", "block_cards"]}
 {"q": "Как нам вернуть неиспользованный аванс, если расторгаем договор?", "must_call": ["lookup_knowledge"], "must_not_call": ["block_cards", "get_contract_summary", "spending_report"]}
 {"q": "До какого числа нужно вернуть подписанные закрывающие документы?", "must_call": ["lookup_knowledge"], "must_not_call": ["block_cards", "get_finance"]}
+{"q": "Водителю не дали заправиться по карте c1, в чеке код ответа 51. Что случилось?", "must_call": ["diagnose_fueling"], "must_not_call": ["block_cards", "set_limit"], "expect_args": {"diagnose_fueling": {"decline_code": "51"}}}

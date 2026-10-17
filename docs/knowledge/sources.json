@@ -48,18 +48,20 @@
     },
     {
       "id": "card-instruction",
-      "title": "Приложение № 4 — Инструкция по использованию Карты (ожидаются коды отказа)",
+      "title": "Приложение № 4 — Инструкция по использованию Карты (порядок заправки, коды отказа)",
       "url": null,
       "site_section": "opti-24.ru → Клиентам → Документы",
       "files": [
+        "*806834ee6b7513835a71d2e57c4f4bf0*.pdf",
         "*нструкци*.pdf",
         "*instrukci*.pdf"
       ],
       "topics": [
+        "card-usage.md",
         "card-service.md"
       ],
-      "sha256": null,
-      "accepted": null
+      "sha256": "e7c84e22cf903447a0c1706ced45b206f9f4b30b38f94f184ce158b2fa6004c4",
+      "accepted": "2026-10-18"
     },
     {
       "id": "goods-restrictions",
@@ -67,13 +69,14 @@
       "url": null,
       "site_section": "opti-24.ru → Клиентам → Документы",
       "files": [
+        "*5d38044cd183929864861c80350381c3*.pdf",
         "*граничител*.pdf"
       ],
       "topics": [
         "card-service.md"
       ],
-      "sha256": null,
-      "accepted": null
+      "sha256": "3ca334cb07631dee80d1a09914f98f1d3b5e83e24e030731e04a53080907537b",
+      "accepted": "2026-10-18"
     },
     {
       "id": "service-list",
@@ -81,13 +84,43 @@
       "url": null,
       "site_section": "opti-24.ru → Клиентам → Документы",
       "files": [
+        "*prilozhenie12perechenjservisnihuslug*.pdf",
         "*ервисн*.pdf"
       ],
       "topics": [
-        "pricing.md"
+        "contract-support.md"
       ],
-      "sha256": null,
-      "accepted": null
+      "sha256": "d4d0649816d52bef620d0b0d568d9ad409bc1debd48e65aa5e5b693f42535f8d",
+      "accepted": "2026-10-18"
+    },
+    {
+      "id": "qualification",
+      "title": "Приложение № 5 — Квалификационные требования",
+      "url": null,
+      "site_section": "opti-24.ru → Клиентам → Документы",
+      "files": [
+        "*74c6ac90cf4237cb6f6607e30f1050a6*.pdf",
+        "*валификацион*.pdf"
+      ],
+      "topics": [
+        "contract-support.md"
+      ],
+      "sha256": "db60cae2b146a3364e32b76c10d1fa1fb1763fcbbef539f1a677173db0f0277c",
+      "accepted": "2026-10-18"
+    },
+    {
+      "id": "anti-corruption",
+      "title": "Приложение № 6 — Обязательство по противодействию мошенничеству и коррупции",
+      "url": null,
+      "site_section": "opti-24.ru → Клиентам → Документы",
+      "files": [
+        "*b3eb0bc3a5fbcff8e2449b50dffba56c*.pdf",
+        "*оррупци*.pdf"
+      ],
+      "topics": [],
+      "note": "В выжимки не включено: не про работу с картами.",
+      "sha256": "073b6d747646349da18a1903f7314d3ac5d8407d197c4f65771e79063113e4d4",
+      "accepted": "2026-10-18"
     },
     {
       "id": "drive-stations",

@@ -298,6 +298,21 @@ def _settings_or_exit() -> Settings:
     return settings
 
 
+# Ошибки, при которых продолжать бессмысленно: каждый следующий запрос получит тот же отказ.
+STOP_STATUSES = {
+    402: "на счёте провайдера не хватает средств",
+    429: "провайдер ограничил частоту запросов или исчерпана квота",
+}
+
+
+def describe_api_error(exc: Exception) -> str:
+    """HTTP-статус и текст ошибки провайдера в одну короткую строку (без ключей и тела запроса)."""
+    status = getattr(exc, "status_code", None)
+    message = " ".join(str(getattr(exc, "message", "") or "").split())[:160]
+    head = f"ошибка API {status}" if status else f"ошибка API: {type(exc).__name__}"
+    return f"{head}: {message}" if message else head
+
+
 async def run_case(settings: Settings, case: dict[str, Any], runs: int) -> int:
     """Прогоняет кейс runs раз, печатает итог и возвращает число неудачных прогонов."""
     failed_runs: list[tuple[list[ToolInput], list[str]]] = []
@@ -312,7 +327,13 @@ async def run_case(settings: Settings, case: dict[str, Any], runs: int) -> int:
                 f"(HTTP {exc.status_code}). Проверьте, что ключ скопирован целиком и не отозван."
             ) from exc
         except API_ERRORS as exc:
-            failed_runs.append((agent.tool_inputs, [f"ошибка API: {type(exc).__name__}"]))
+            status = getattr(exc, "status_code", None)
+            if status in STOP_STATUSES:
+                raise SystemExit(
+                    f"Провайдер {settings.provider}: {STOP_STATUSES[status]} (HTTP {status}). "
+                    "Прогон остановлен, чтобы не тратить запросы впустую."
+                ) from exc
+            failed_runs.append((agent.tool_inputs, [describe_api_error(exc)]))
             continue
         problems = check_case(case, agent.tool_inputs, date.today())
         if problems:

@@ -126,6 +126,49 @@ def test_report_spends_one_call_per_page(tmp_path: Path) -> None:
     assert out["total"] == "600,00 ₽" and budget.spent == 1
 
 
+def test_same_period_is_loaded_once_for_report_and_anomalies(tmp_path: Path) -> None:
+    _, budget, tools = make_tools(
+        Mode.READ_ONLY, answer=False, tmp=tmp_path, txs=[tx(1, 12, "60.00", 10)]
+    )
+    args = {"date_from": "2026-09-01", "date_to": "2026-09-30"}
+    asyncio.run(tools["spending_report"].call(args))
+    out = json.loads(asyncio.run(tools["find_suspicious_fills"].call(args)))
+    asyncio.run(tools["spending_report"].call(args))
+    assert out["checked_operations"] == 1 and budget.spent == 1
+
+
+def test_block_dedupes_ids_and_shows_them_to_human(tmp_path: Path) -> None:
+    fake = FakeOpti24([])
+    asked: list[str] = []
+
+    async def ask(text: str) -> bool:
+        asked.append(text)
+        return True
+
+    gate = ApprovalGate(mode=Mode.CONFIRM, ask=ask, audit_log=tmp_path / "audit.jsonl")
+    tools = {t.name: t for t in build_tools(fake, BillingBudget(limit=3), gate)}  # type: ignore[arg-type]
+    out = json.loads(
+        asyncio.run(tools["block_cards"].call({"card_ids": ["c7", "c7", " "], "reason": "x"}))
+    )
+    assert out == {"status": "blocked", "cards": 1} and fake.blocked == ["c7"]
+    assert "c7" in asked[0]
+    assert "c7" not in (tmp_path / "audit.jsonl").read_text(encoding="utf-8")
+
+
+def test_limits_need_exactly_one_target(tmp_path: Path) -> None:
+    _, _, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path)
+    for args in ({}, {"card_id": "c1", "group_id": "g1"}):
+        out = json.loads(asyncio.run(tools["get_limits"].call(args)))
+        assert out["error"] == "bad_request"
+
+
+def test_claude_md_matches_system_prompt() -> None:
+    from agent.prompt import SYSTEM_PROMPT
+
+    claude_md = (Path(__file__).resolve().parent.parent / "CLAUDE.md").read_text(encoding="utf-8")
+    assert claude_md.strip() == SYSTEM_PROMPT.strip()  # инструкция для Claude Code не отстала
+
+
 def test_tool_schemas_are_compact() -> None:
     _, _, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=Path("/tmp"))
     size = sum(len(json.dumps(t.to_dict(), ensure_ascii=False)) for t in tools.values())

@@ -18,6 +18,15 @@ STEM = 5
 MAX_SECTION_CHARS = 1500
 
 MIN_SCORE = 2  # одно случайное слово («Москва») ещё не ответ
+# Слова клиента, которых нет в тексте договора: «потерялась» ищет раздел про блокировку.
+SYNONYMS = {  # ключи — основы по первым пяти буквам
+    "потер": ("заблокировать", "утрата"),
+    "украл": ("заблокировать", "утрата"),
+    "краж": ("заблокировать", "утрата"),
+    "украд": ("заблокировать", "утрата"),
+    "верну": ("возврат",),
+    "вернё": ("возврат",),
+}
 _WORD = re.compile(r"[а-яёa-z0-9]+", re.IGNORECASE)
 _STOP = {
     "как", "какой", "какая", "какие", "что", "где", "когда", "почему", "зачем", "для", "это",
@@ -100,12 +109,16 @@ def load_sections(directory: Path | None = None) -> list[Section]:
 def search(sections: list[Section], query: str, top: int = 3) -> list[dict[str, str]]:
     """Лучшие разделы по вопросу; пустой список — в базе знаний ответа нет."""
     wanted = _stems(query)
+    for stem in list(wanted):
+        for synonym in SYNONYMS.get(stem, ()):
+            wanted |= _stems(synonym)
     if not wanted:
         return []
     scored = []
     for section in sections:
+        matched = wanted & (_stems(section.heading) | _stems(section.text))
         score = 3 * len(wanted & _stems(section.heading)) + len(wanted & _stems(section.text))
-        if score >= MIN_SCORE:
+        if score >= MIN_SCORE and (len(matched) >= 2 or len(wanted) == 1):
             scored.append((score, section))
     scored.sort(key=lambda pair: -pair[0])
     return [

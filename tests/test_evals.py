@@ -77,3 +77,11 @@ def test_api_error_description_has_status_and_no_request_body() -> None:
 
 def test_balance_and_rate_limit_errors_stop_the_run() -> None:
     assert set(STOP_STATUSES) == {402, 429}
+
+
+def test_retrieval_quality_stays_above_thresholds() -> None:
+    from evals.run_retrieval import MIN_HIT_AT_3, MIN_UNKNOWN, evaluate
+
+    result = evaluate()
+    assert result["hit_at_n"] >= MIN_HIT_AT_3, result["misses"]
+    assert result["unknown_ok"] >= MIN_UNKNOWN, result["false_answers"]

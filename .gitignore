@@ -7,3 +7,4 @@ agent-audit.jsonl
 .env.*
 !.env.example
 .coverage
+knowledge_store/

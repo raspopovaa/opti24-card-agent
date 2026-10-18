@@ -3,6 +3,7 @@
 Запуск (нужен ключ выбранного провайдера, тратит копейки):
     python evals/run_evals.py                          # модель из AGENT_MODEL
     python evals/run_evals.py --runs 3                 # каждый кейс 3 раза
+    python evals/run_evals.py --pause 6                # пауза между прогонами (бесплатные тарифы)
     AGENT_MODEL=claude-sonnet-5-5 python evals/run_evals.py
     AGENT_PROVIDER=deepseek python evals/run_evals.py  # ключ в DEEPSEEK_API_KEY
 
@@ -313,10 +314,12 @@ def describe_api_error(exc: Exception) -> str:
     return f"{head}: {message}" if message else head
 
 
-async def run_case(settings: Settings, case: dict[str, Any], runs: int) -> int:
+async def run_case(settings: Settings, case: dict[str, Any], runs: int, pause: float = 0) -> int:
     """Прогоняет кейс runs раз, печатает итог и возвращает число неудачных прогонов."""
     failed_runs: list[tuple[list[ToolInput], list[str]]] = []
     for _ in range(runs):
+        if pause:
+            await asyncio.sleep(pause)  # бесплатные тарифы ограничивают запросы в минуту
         agent = FuelCardAgent(settings=settings, opti24=FakeOpti24(), ask_human=never)  # type: ignore[arg-type]
         try:
             await agent.ask(case["q"])
@@ -347,13 +350,13 @@ async def run_case(settings: Settings, case: dict[str, Any], runs: int) -> int:
     return len(failed_runs)
 
 
-async def main(runs: int) -> int:
+async def main(runs: int, pause: float = 0) -> int:
     cases = [json.loads(line) for line in Path(__file__).with_name("cases.jsonl").open()]
     settings = _settings_or_exit()
     print(f"Провайдер: {settings.provider}, модель: {settings.model}, прогонов на кейс: {runs}")
     failed_cases = 0
     for case in cases:
-        failed_cases += bool(await run_case(settings, case, runs))
+        failed_cases += bool(await run_case(settings, case, runs, pause))
     print(f"\nКейсов с ошибками: {failed_cases} из {len(cases)}")
     return 1 if failed_cases else 0
 
@@ -361,6 +364,7 @@ async def main(runs: int) -> int:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Оценка выбора инструментов агента")
     parser.add_argument("--runs", type=int, default=1, help="сколько раз прогнать каждый кейс")
+    parser.add_argument("--pause", type=float, default=0, help="пауза перед каждым прогоном, секунды")
     args = parser.parse_args()
     if args.runs < 1:
         parser.error("--runs должно быть не меньше 1")
@@ -368,4 +372,5 @@ def parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main(parse_args().runs)))
+    arguments = parse_args()
+    raise SystemExit(asyncio.run(main(arguments.runs, arguments.pause)))

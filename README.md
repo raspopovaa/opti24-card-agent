@@ -15,10 +15,11 @@
 python -m agent.dashboard    # только дашборд договора, без модели и без ключей ИИ
 python -m agent              # дашборд + диалог в терминале
 python scripts/smoke_test.py # проверка на настоящем API (DEMO), без модели
-pytest                       # 127 тестов без сети и без ключей
+pytest                       # 128 тестов без сети и без ключей
 ruff check agent scripts evals tests && mypy agent  # проверки качества кода, их же запускает CI
 python scripts/estimate_cost.py
 python evals/run_evals.py --runs 3  # оценка агента: инструменты и их аргументы (нужен ключ модели)
+python evals/run_evals_claude.py --model claude-haiku-5-5  # то же без API-ключа: через Claude Code по подписке
 ```
 
 ### Веб-дашборд на своём компьютере
@@ -325,6 +326,11 @@ AGENT_PROVIDER=custom AGENT_BASE_URL=https://llm.example.ru/v1 AGENT_MODEL=model
   вызывать инструменты. Оценка `evals/` на настоящем API пока запускалась только на
   DeepSeek; OpenAI, YandexGPT и GigaChat подключены по документации провайдеров. Перед работой
   прогоните на выбранной модели `evals/run_evals.py`.
+- **Оценка без API-ключа.** `evals/run_evals_claude.py` прогоняет те же кейсы через Claude Code
+  по вашей подписке (`claude -p`): встроенные инструменты отключены, остаётся MCP-сервер с
+  инструментами агента на поддельном Opti24 (`evals/fake_mcp_server.py`). Цикл при этом ведёт
+  Claude Code, а не наш агент, поэтому результат приблизительный; запросы расходуют лимиты
+  подписки. Для остальных провайдеров с бесплатным тарифом у `run_evals.py` есть `--pause`.
 - **Выбор по кейсам, а не по цене.** Запустите `evals/run_evals.py --runs 3` на каждой
   модели, например `AGENT_PROVIDER=deepseek python evals/run_evals.py --runs 3`.
   Годится самая дешёвая, у которой нет ошибок ни в одном прогоне. Скрипт проверяет не

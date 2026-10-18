@@ -54,19 +54,28 @@ def make_context(
     ).expanduser()
 
     monthly_quota = int(os.environ.get("OPTI24_MONTHLY_QUOTA", DEFAULT_MONTHLY_QUOTA))
+    # Размер пакета «известен», если его сообщил API или его явно задали: только тогда он
+    # ограничивает бюджет. Значение по умолчанию — ориентир: общий счётчик стенда DEMO
+    # показывает больше 500 запросов, и без этой оговорки платные вызовы были бы закрыты.
+    quota_configured = os.environ.get("OPTI24_MONTHLY_QUOTA") is not None
     # Выжимки договора маленькие и читаются один раз при старте, а не в асинхронном пути.
     knowledge = load_sections()
 
     def quota_payload(info: Any) -> dict[str, object]:
-        """Расход месячного пакета; бюджет сессии не больше остатка, чтобы не довести до блокировки."""
+        """Расход месячного пакета; при известном размере бюджет сессии не больше остатка."""
         package = info.client_info.Queries
         quota = int(package) if package else monthly_quota
         used = int(info.methods.all or 0)
         left = max(quota - used, 0)
-        budget.limit = min(budget.limit, budget.spent + left)
+        enforced = bool(package) or quota_configured
+        if enforced:
+            budget.limit = min(budget.limit, budget.spent + left)
         payload: dict[str, object] = {
             "monthly_quota": quota,
-            "quota_source": "API" if package else "настройка OPTI24_MONTHLY_QUOTA",
+            "quota_source": "API" if package else (
+                "настройка OPTI24_MONTHLY_QUOTA" if quota_configured else "по умолчанию (ориентир)"
+            ),
+            "quota_enforced": enforced,
             "calls_in_period": used,
             "left_in_period": left,
         }

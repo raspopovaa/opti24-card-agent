@@ -16,6 +16,15 @@ from pathlib import Path
 from .providers import get_provider
 
 
+def _int_env(name: str, default: int) -> int:
+    """Целое из переменной окружения; нечисловое значение — понятная ошибка, а не трассировка."""
+    raw = os.environ.get(name, str(default))
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(f"Переменная {name} должна быть целым числом, а не {raw[:30]!r}") from None
+
+
 def default_env_file(kind: str) -> str:
     """``.env.<kind>`` в папке проекта, если есть, иначе ``~/.opti24-<kind>.env``."""
     local = Path(__file__).resolve().parent.parent / f".env.{kind}"
@@ -64,9 +73,9 @@ class Settings:
             effort=os.environ.get("AGENT_EFFORT", "medium"),
             mode=Mode(os.environ.get("AGENT_MODE", Mode.READ_ONLY)),
             # Предохранитель от зацикливания: столько обращений к модели за один вопрос.
-            max_iterations=int(os.environ.get("AGENT_MAX_ITERATIONS", "8")),
+            max_iterations=_int_env("AGENT_MAX_ITERATIONS", 8),
             # Предохранитель для пакета Opti24: тарифицируемых вызовов API за сессию.
-            max_billable_calls=int(os.environ.get("AGENT_MAX_BILLABLE_CALLS", "10")),
+            max_billable_calls=_int_env("AGENT_MAX_BILLABLE_CALLS", 10),
             opti24_env_file=Path(
                 os.environ.get("OPTI24_ENV_FILE") or default_env_file("demo")
             ).expanduser(),

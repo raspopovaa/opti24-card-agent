@@ -9,8 +9,9 @@
     python scripts/smoke_test.py
 
 
-Блокировка карт никогда не вызывается. Результаты печатаются в сокращённом виде
-(без номеров карт и персональных данных): их можно присылать для разбора.
+Блокировка карт никогда не вызывается. Результаты печатаются в сокращённом виде,
+номера карт маскируются. Комментарии к картам могут содержать имена и названия
+машин, поэтому перед отправкой вывода кому-либо просмотрите его.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -46,6 +48,8 @@ async def never(_: str) -> bool:
 
 
 def short(text: str, limit: int = 160) -> str:
+    """Начало ответа для печати: длинные числа (номера карт) маскируются."""
+    text = re.sub(r"\d{12,}", lambda m: m.group()[:4] + "…" + m.group()[-2:], text)
     return text if len(text) <= limit else text[:limit] + "…"
 
 

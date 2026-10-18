@@ -8,6 +8,7 @@ from anthropic import beta_async_tool
 from apisdkopti24 import APIError
 from apisdkopti24.errors import ContractSelectionError, RequestValidationError
 
+from ..config import Mode
 from ..knowledge import search as search_knowledge
 from ..money import rub, to_decimal
 from ..safety import BudgetExceededError
@@ -21,13 +22,14 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     budget = ctx.budget
     knowledge = ctx.knowledge
     quota_payload = ctx.quota_payload
+    gate = ctx.gate
 
     @beta_async_tool
     async def get_account_context() -> str:
-        """Договор, роль, режим только чтения, пакет и период статистики. Бесплатно.
+        """Договор, роль, разрешены ли изменения, пакет и период статистики. Бесплатно.
 
         Вызывай в начале разговора, чтобы понять, какой договор выбран и можно ли
-        что-то менять. Если договоров несколько, покажи их номера пользователю.
+        что-то менять (changes_enabled). Если договоров несколько, покажи их номера.
         """
         try:
             contract_id = getattr(client, "contract_id", None)
@@ -48,6 +50,10 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                 "org_name": data.org_name,
                 "role": data.role_name,
                 "read_only": data.read_only,
+                # Режим агента (AGENT_MODE) отдельно от прав аккаунта: изменения возможны, только если
+                # агент запущен в confirm и у аккаунта есть право записи.
+                "agent_mode": gate.mode.value,
+                "changes_enabled": gate.mode is Mode.CONFIRM and not data.read_only,
                 "period": {"from": _iso(info.from_), "to": _iso(info.to)},
                 **quota_payload(info),
             }

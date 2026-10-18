@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from .core_types import UsageSink
@@ -46,7 +46,13 @@ def parse_tool_args(raw_args: str | None) -> dict[str, Any]:
 async def _run_tool(tools: dict[str, Any], name: str, raw_args: str) -> str:
     tool = tools.get(name)
     if tool is None:
-        return json.dumps({"error": "unknown_tool", "message": f"Нет инструмента {name}"})
+        return json.dumps(
+            {
+                "error": "unknown_tool",
+                "message": f"Нет инструмента {name}. Если он нужен, открой его группу вызовом open_toolbox.",
+            },
+            ensure_ascii=False,
+        )
     try:
         args = json.loads(raw_args or "{}")
         result = await tool.call(args)
@@ -61,18 +67,23 @@ async def run_openai_loop(
     model: str,
     system: str,
     messages: list[dict[str, Any]],
-    tools: Sequence[Any],
+    tools: Sequence[Any] | Callable[[], Sequence[Any]],
     max_iterations: int,
     usage: UsageSink,
 ) -> tuple[str, list[tuple[str, dict[str, Any]]]]:
-    """Возвращает итоговый текст и вызванные инструменты: (имя, аргументы)."""
-    by_name = {t.name: t for t in tools}
-    schemas = to_openai_tools(tools)
+    """Возвращает итоговый текст и вызванные инструменты: (имя, аргументы).
+
+    ``tools`` — список или функция, возвращающая список: функция вызывается на каждом шаге,
+    поэтому набор инструментов может меняться по ходу вопроса (двухуровневый выбор).
+    """
     conversation: list[dict[str, Any]] = [{"role": "system", "content": system}, *messages]
     called: list[tuple[str, dict[str, Any]]] = []
     text = ""
 
     for _ in range(max_iterations):
+        current = tools() if callable(tools) else tools
+        by_name = {t.name: t for t in current}
+        schemas = to_openai_tools(current)
         response = await client.chat.completions.create(
             model=model, messages=conversation, tools=schemas, max_tokens=4096
         )

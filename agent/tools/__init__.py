@@ -22,7 +22,7 @@ from typing import Any
 from apisdkopti24 import APIClient
 
 from ..safety import ApprovalGate, BillingBudget
-from . import account, cards, operations, reports, rules
+from . import account, cards, operations, reference, reports, rules
 from .common import MAX_LIST, TransactionsUnavailableError, load_transactions
 from .context import make_context
 
@@ -38,7 +38,7 @@ def build_tools(
     """Собирает инструменты, привязанные к клиенту, бюджету и подтверждению."""
     ctx = make_context(client, budget, gate, reports_dir)
     tools: dict[str, Any] = {}
-    for module in (account, cards, rules, operations, reports):
+    for module in (account, cards, rules, operations, reports, reference):
         tools.update(module.build(ctx))
     read_tools = [
         tools["get_account_context"],
@@ -58,6 +58,7 @@ def build_tools(
         tools["get_report_status"],
         tools["download_fuel_report"],
         tools["lookup_knowledge"],
+        tools["lookup_dictionary"],
         tools["get_api_usage"],
     ]
     write_tools = [

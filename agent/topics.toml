@@ -1,0 +1,542 @@
+# Матрица тем: запрос клиента → тема → инструменты агента → данные из ответов SDK → что спросить.
+#
+# Как пополнять: возьмите реальный вопрос клиента (журнал AGENT_TOPIC_LOG), добавьте его в
+# examples подходящей темы или заведите новую тему, допишите keywords и запустите pytest:
+# тест проверит, что каждый пример попадает в свою тему, инструменты существуют, а поля
+# answer_fields есть в моделях ответа SDK. Затем обновите docs/topic-matrix.md:
+#     python scripts/generate_topic_matrix.py
+#
+# Разделы ([[section]]) группируют темы: модель может открыть весь раздел, если сомневается
+# между его темами.
+#
+# Поля темы:
+#   id, title, goal     — ключ, название темы и цель клиента своими словами;
+#   section             — раздел из [[section]];
+#   examples            — реальные формулировки (тест: каждая попадает в эту тему);
+#   keywords            — начала слов в нижнем регистре («ё» как «е»): слово весит 1, фраза из
+#                         нескольких слов ищется целиком и весит 2, «!» в конце добавляет 1;
+#                         подсказка даётся, только если сумма главной темы не меньше 2 и строго
+#                         больше, чем у следующей: многозначные слова («счёт», «заправка») — без «!»,
+#                         точные («баланс», «платёж») — с «!», чтобы одного совпадения хватало;
+#   tools               — инструменты агента в порядке вызова;
+#   answer_fields       — «операция SDK:путь поля» в модели ответа, из которых берётся ответ;
+#   dictionaries        — справочники API (get_dictionary), которыми код расшифровывает коды в ответе;
+#   supported = false   — агент этого не делает: reply объясняет почему и что делать;
+#   [[topic.params]]    — что нужно для ответа: kind (period, card, product, station, liters,
+#                         decline_code, transaction_id, reason, amount, region), required,
+#                         default (current_month) или ask — вопрос пользователю, если не указано.
+
+[[section]]
+id = "money"
+title = "Деньги и договор"
+summary = "баланс, платежи, счета и закрывающие документы"
+
+[[section]]
+id = "spending"
+title = "Расходы и цены"
+summary = "расходы, цена топлива, скидка, регионы, заправки, подозрительные"
+
+[[section]]
+id = "cards"
+title = "Карты"
+summary = "поиск карт, водитель, блокировка, комментарий"
+
+[[section]]
+id = "rules"
+title = "Правила заправки"
+summary = "лимиты, региональные правила, ограничители и их изменение"
+
+[[section]]
+id = "refusals"
+title = "Отказы на АЗС"
+summary = "почему карту не приняли, разбор по чеку"
+
+[[section]]
+id = "reports"
+title = "Отчёты"
+summary = "заказ, статус и скачивание отчётов"
+
+[[section]]
+id = "reference"
+title = "Условия, справочники и доступ"
+summary = "условия договора, справочники, роль, пакет запросов API"
+
+[[section]]
+id = "outside"
+title = "Вне задач агента"
+summary = "переводы денег, заказ карт, расход на 100 км, посторонние вопросы"
+
+[[topic]]
+id = "balance"
+section = "money"
+title = "Баланс договора"
+goal = "Узнать, сколько денег осталось на договоре и хватит ли их"
+examples = ["Сколько денег осталось на договоре?", "Какой у нас баланс?", "Хватит ли денег до конца месяца?"]
+keywords = ["баланс!", "остат", "деньг", "денег", "хватит", "средств", "доступн", "на счету", "закончатся", "кончатся"]
+dictionaries = ["DiscountScheme", "PaymentTerm", "PaymentScheme"]
+tools = ["get_contract_summary"]
+answer_fields = [
+  "get_contract_data:data.balanceData.available_amount",
+  "get_contract_data:data.balanceData.own_balance",
+  "get_contract_data:data.balanceData.consumption_for_month",
+  "get_contract_data:data.balanceData.last_payment_sum",
+  "get_contract_data:data.balanceData.last_payment_date",
+]
+notes = "«Доступно» — available_amount; лимитные поля договора не путать с остатком денег. Прогноз — только по просьбе."
+
+[[topic]]
+id = "spending"
+section = "spending"
+title = "Расходы"
+goal = "Узнать, сколько потратили на топливо за период"
+examples = ["Сколько мы потратили на топливо в сентябре 2026?", "Сколько потратили в прошлом месяце?", "Покажи расходы"]
+keywords = ["потрат!", "расход!", "истрат!", "сколько ушло", "жжет", "жрет", "больше всех", "прожорлив"]
+tools = ["spending_report"]
+answer_fields = [
+  "get_transactions_v2:data.result.sum",
+  "get_transactions_v2:data.result.qty",
+  "get_transactions_v2:data.result.product_name",
+  "get_transactions_v2:data.result.card_id",
+]
+notes = "Операции видны через 1–2 часа после заправки. Период больше месяца делится на месяцы."
+  [[topic.params]]
+  kind = "period"
+  required = true
+  default = "current_month"
+
+[[topic]]
+id = "fuel_price"
+section = "spending"
+title = "Цена топлива"
+goal = "Узнать реальную цену литра топлива с учётом скидки и сервисного сбора"
+examples = [
+  "Какая у нас реальная цена литра дизеля с учётом скидки по регионам за сентябрь 2026?",
+  "Посмотри транзакции за апрель и рассчитай цену топлива с учётом скидок и комиссий",
+  "Сколько мы реально платим за литр?",
+]
+keywords = ["цен", "за литр!", "стоимость литра", "цена литра!", "цену топлива!", "реальная цена!", "комисс", "сбор", "обходится", "обошел", "почем"]
+dictionaries = ["Region"]
+tools = ["fuel_price_analytics", "get_contract_summary"]
+answer_fields = [
+  "get_transactions_v2:data.result.price",
+  "get_transactions_v2:data.result.price_no_discount",
+  "get_transactions_v2:data.result.sum",
+  "get_transactions_v2:data.result.sum_no_discount",
+  "get_transactions_v2:data.result.qty",
+  "get_contract_data:data.balanceData.consumption_for_prev_month_volume",
+]
+notes = "Ставка сбора — по объёму прошлого месяца (consumption_for_prev_month_volume) и таблице 3 Приложения № 1; это типовая редакция."
+  [[topic.params]]
+  kind = "period"
+  required = true
+  default = "current_month"
+  [[topic.params]]
+  kind = "product"
+  required = false
+
+[[topic]]
+id = "discount"
+section = "spending"
+title = "Скидка"
+goal = "Узнать размер скидки: фактическую по операциям и по условиям договора"
+examples = ["Какая у нас скидка?", "Сколько мы сэкономили на скидках в сентябре 2026?"]
+keywords = ["скидк!", "сэконом!", "экономи"]
+dictionaries = ["DiscountScheme"]
+tools = ["fuel_price_analytics", "get_contract_summary", "lookup_knowledge"]
+answer_fields = [
+  "get_transactions_v2:data.result.discount",
+  "get_transactions_v2:data.result.price_no_discount",
+  "get_transactions_v2:data.result.sum_no_discount",
+  "get_contract_data:data.contractData.discount_scheme",
+]
+notes = "Фактическая скидка — по операциям; проценты по сетям и регионам — из базы знаний (таблицы 1.1–1.3)."
+  [[topic.params]]
+  kind = "period"
+  required = true
+  default = "current_month"
+
+[[topic]]
+id = "cheaper_region"
+section = "spending"
+title = "Цены по регионам"
+goal = "Сравнить цену и литры по регионам и понять, где заправляться выгоднее"
+examples = ["В каком регионе нам выгоднее заправляться? Сравни цены за август 2026", "Сколько литров мы заливаем по регионам?"]
+keywords = ["регион", "по регионам!", "выгодн!", "дешевл!", "где заправ", "дешевле всего"]
+dictionaries = ["Region"]
+tools = ["fuel_price_analytics"]
+answer_fields = [
+  "get_transactions_v2:data.result.poi_id",
+  "get_transactions_v2:data.result.price",
+  "get_transactions_v2:data.result.qty",
+  "get_azs_list_v1:data.result.regionCode",
+]
+notes = "Сравнение по истории за период, а не по текущим ценам; соседство регионов и маршрут API не знает."
+  [[topic.params]]
+  kind = "period"
+  required = true
+  default = "current_month"
+  [[topic.params]]
+  kind = "product"
+  required = false
+
+[[topic]]
+id = "suspicious"
+section = "spending"
+title = "Подозрительные заправки"
+goal = "Найти подозрительные заправки: ночные, крупные, частые, дорогие"
+examples = ["Есть ли подозрительные заправки с 1 по 15 сентября 2026?", "Были ли ночные заправки?"]
+keywords = ["подозрит!", "аномал!", "ночн!", "слив!", "сливает!", "воровств!", "странн"]
+tools = ["find_suspicious_fills"]
+answer_fields = [
+  "get_transactions_v2:data.result.timestamp",
+  "get_transactions_v2:data.result.qty",
+  "get_transactions_v2:data.result.price",
+  "get_transactions_v2:data.result.card_id",
+]
+notes = "Эвристика, а не доказательство: «требует проверки». Пробега и GPS в API нет."
+  [[topic.params]]
+  kind = "period"
+  required = true
+  default = "current_month"
+
+[[topic]]
+id = "transactions"
+section = "spending"
+title = "Заправки и операции"
+goal = "Посмотреть конкретные заправки и операции"
+examples = ["Покажи последние заправки за сентябрь 2026", "Покажи операции по карте за неделю"]
+keywords = ["заправк", "операц", "транзакц", "чеки", "покажи заправки!", "последние заправки!", "операции по карте!"]
+tools = ["list_transactions"]
+answer_fields = [
+  "get_transactions_v2:data.result.timestamp",
+  "get_transactions_v2:data.result.product_name",
+  "get_transactions_v2:data.result.qty",
+  "get_transactions_v2:data.result.sum",
+  "get_transactions_v2:data.result.poi_id",
+]
+  [[topic.params]]
+  kind = "period"
+  required = true
+  default = "current_month"
+  [[topic.params]]
+  kind = "card"
+  required = false
+
+[[topic]]
+id = "transaction_detail"
+section = "spending"
+title = "Операция по номеру"
+goal = "Разобрать одну операцию по её номеру"
+examples = ["Покажи детали операции 123"]
+keywords = ["детали операц", "операция №", "операции №", "детали транзакц"]
+tools = ["get_transaction_detail"]
+answer_fields = [
+  "get_transaction_detail:data.result.price",
+  "get_transaction_detail:data.result.price_no_discount",
+  "get_transaction_detail:data.result.discount",
+  "get_transaction_detail:data.result.is_storno",
+]
+  [[topic.params]]
+  kind = "transaction_id"
+  required = true
+  ask = "Какой номер операции разобрать?"
+
+[[topic]]
+id = "cards"
+section = "cards"
+title = "Карты и группы"
+goal = "Найти карту или посмотреть список карт и групп"
+examples = ["Покажи активные карты", "Покажи группы карт", "Какие карты есть на договоре?"]
+keywords = ["активн", "групп!", "список карт", "какие карты", "найди карт", "номер карт"]
+tools = ["list_cards", "list_card_groups"]
+answer_fields = [
+  "get_cards_v2:data.result.number",
+  "get_cards_v2:data.result.status_name",
+  "get_cards_v2:data.result.group_name",
+  "get_cards_v2:data.result.comment",
+  "get_card_groups:data.result.name",
+  "get_card_groups:data.result.cards_count",
+]
+notes = "При нескольких совпадениях — уточнить; номер и ID показывать как в ответе."
+
+[[topic]]
+id = "card_profile"
+section = "cards"
+title = "Профиль карты"
+goal = "Узнать, кто водитель карты, когда и где она использовалась"
+examples = [
+  "Кто водитель на карте 7826010000000001?",
+  "Когда последний раз заправлялись по карте Газели?",
+  "Какая карта закреплена за Газелью Иванова?",
+]
+keywords = ["водител", "кто водитель", "закреплен!", "последний раз заправ", "когда использ", "чья карта", "чья это карта"]
+tools = ["list_cards", "get_card_profile"]
+answer_fields = [
+  "get_card_detail:data.result.date_last_usage",
+  "get_card_detail:data.result.servicecenter_last_usage_name",
+  "get_card_detail:data.result.available",
+  "get_card_drivers:data.result.last_name",
+]
+notes = "Персональные данные водителя показывать только по прямому вопросу."
+  [[topic.params]]
+  kind = "card"
+  required = true
+  ask = "О какой карте речь? Номер, ID или комментарий (машина, водитель)."
+
+[[topic]]
+id = "limits"
+section = "rules"
+title = "Лимиты и правила"
+goal = "Посмотреть лимиты, региональные правила и товарные ограничители"
+examples = ["Какие лимиты на карте Газели Иванова?", "Покажи лимиты по договору", "Покажи регионы и ограничители по карте c1"]
+keywords = ["лимит!", "ограничител!", "ограничен", "сколько можно залить", "сколько еще можно"]
+dictionaries = ["ProductType"]
+tools = ["get_limits", "get_access_rules", "list_cards"]
+answer_fields = [
+  "get_limits:data.result.amount.value",
+  "get_limits:data.result.amount.used",
+  "get_limits:data.result.sum.value",
+  "get_limits:data.result.sum.used",
+  "get_limits:data.result.time.type",
+  "get_region_limits:data.result.region",
+  "get_region_limits:data.result.limit_type",
+  "get_restrictions:data.result.productTypeName",
+  "get_restrictions:data.result.restriction_type",
+]
+notes = "Карту, группу или весь договор. Региональные лимиты и ограничители — 2 платных запроса."
+
+[[topic]]
+id = "refusal"
+section = "refusals"
+title = "Отказ на АЗС"
+goal = "Понять, почему карту не приняли на АЗС"
+examples = [
+  "Почему карта c1 не работает?",
+  "Водителю на АЗС 137 отказали в заправке по карте c1, ДТ 50 литров. В чеке отказа код ответа ER3, текст «Операция прервана». Почему?",
+  "Водителю не дали заправиться по карте c1, в чеке код ответа 51. Что случилось?",
+]
+keywords = ["не работает", "отказ", "не дали", "не приняли", "не проходит", "чек отказа", "код ответа"]
+dictionaries = ["Goods", "ProductType"]
+tools = ["diagnose_fueling"]
+answer_fields = [
+  "get_card_detail:data.result.status",
+  "get_card_detail:data.result.pin_counter",
+  "get_limits:data.result.amount.used",
+  "get_contract_data:data.balanceData.available_amount",
+  "get_region_limits:data.result.limit_type",
+  "get_restrictions:data.result.restriction_type",
+]
+notes = "Порядок: статус → check_purchase → лимит → баланс → регион и ограничитель → PIN. Код из чека — по таблице Приложения № 4."
+  [[topic.params]]
+  kind = "card"
+  required = true
+  ask = "По какой карте отказ? Номер, ID или комментарий."
+  [[topic.params]]
+  kind = "decline_code"
+  required = false
+  ask = "Есть ли чек отказа? Пришлите код ответа и текст причины."
+  [[topic.params]]
+  kind = "station"
+  required = false
+  [[topic.params]]
+  kind = "product"
+  required = false
+  [[topic.params]]
+  kind = "liters"
+  required = false
+
+[[topic]]
+id = "block_card"
+section = "cards"
+title = "Блокировка карт"
+goal = "Заблокировать или разблокировать карту"
+examples = ["Заблокируй карту 7826010000000001, водитель уволился", "Заблокируй все карты", "Разблокируй карту Газели"]
+keywords = ["заблок!", "разблок!", "блокир!"]
+tools = ["list_cards", "block_cards"]
+answer_fields = ["get_cards_v2:data.result.number", "get_cards_v2:data.result.status_name"]
+notes = "Только по конкретным картам и прямой просьбе; подтверждение человека; в read_only — отказ."
+  [[topic.params]]
+  kind = "card"
+  required = true
+  ask = "Какие карты заблокировать? Номера или комментарии, массовая блокировка не выполняется."
+  [[topic.params]]
+  kind = "reason"
+  required = true
+  ask = "Причина блокировки (например, увольнение водителя или утеря карты)?"
+
+[[topic]]
+id = "card_comment"
+section = "cards"
+title = "Комментарий карты"
+goal = "Подписать карту: машина, водитель, подразделение"
+examples = ["Подпиши карту c1: Газель, Петров", "Измени комментарий карты 7826010000000001"]
+keywords = ["подпиш!", "комментар!", "комментарий карты", "переименуй"]
+tools = ["list_cards", "set_card_comment"]
+answer_fields = ["get_cards_v2:data.result.comment"]
+notes = "1–90 символов; персональные данные без необходимости не писать; подтверждение человека."
+  [[topic.params]]
+  kind = "card"
+  required = true
+  ask = "Какую карту подписать? Номер, ID или текущий комментарий."
+
+[[topic]]
+id = "change_rules"
+section = "rules"
+title = "Изменение правил"
+goal = "Изменить лимит, разрешить или запретить регион или вид топлива"
+examples = ["Поставь лимит 300 литров в месяц на карту c1", "Запрети заправку в Москве по карте c1", "Разреши только ДТ по карте c1"]
+keywords = ["постав!", "установ!", "измени!", "запрет!", "разреш!", "удали лимит", "поставь лимит", "установи лимит", "измени лимит"]
+tools = ["get_access_rules", "set_limit", "set_region_limit", "set_restriction", "remove_limit", "remove_region_limit", "remove_restriction"]
+answer_fields = ["get_limits:data.result.id", "get_region_limits:data.result.id", "get_restrictions:data.result.id"]
+notes = "Сначала показать текущее правило и новое; подтверждение человека; код периода не угадывать."
+  [[topic.params]]
+  kind = "card"
+  required = true
+  ask = "Для какой карты или группы изменить правило?"
+  [[topic.params]]
+  kind = "amount"
+  required = false
+
+[[topic]]
+id = "payments"
+section = "money"
+title = "Платежи"
+goal = "Посмотреть платежи по договору"
+examples = ["Покажи платежи за сентябрь 2026", "Когда был последний платёж?"]
+keywords = ["платеж!", "оплат", "поступлен", "закидывали", "пополняли"]
+tools = ["get_finance"]
+answer_fields = ["get_payments:data.result.date", "get_payments:data.result.amount", "get_payments:data.result.payment_name"]
+notes = "Платежи — платный запрос; последний платёж есть и в сводке договора."
+  [[topic.params]]
+  kind = "period"
+  required = true
+  default = "current_month"
+
+[[topic]]
+id = "documents"
+section = "money"
+title = "Счета и документы"
+goal = "Найти счета и закрывающие документы"
+examples = ["Покажи закрывающие документы за сентябрь 2026", "Есть ли неоплаченные счета?"]
+keywords = ["документ!", "закрывающ!", "счет", "счета на оплату", "упд!", "акт сверки", "счет-фактур", "счета-фактур"]
+tools = ["get_finance"]
+answer_fields = [
+  "get_invoices:data.result.amount",
+  "get_invoices:data.result.status",
+  "get_documents:data.result.name",
+  "get_documents:data.result.total",
+  "get_documents:data.result.date",
+]
+notes = "Счета и документы бесплатны; документы только на рабочем API."
+  [[topic.params]]
+  kind = "period"
+  required = true
+  default = "current_month"
+
+[[topic]]
+id = "reports"
+section = "reports"
+title = "Отчёты"
+goal = "Заказать, проверить или скачать отчёт"
+examples = ["Какие отчёты уже заказаны?", "Закажи отчёт за сентябрь 2026 в Excel"]
+keywords = ["отчет!", "excel!", "xlsx!", "выгруз", "скача"]
+tools = ["get_report_status", "order_fuel_report", "download_fuel_report"]
+answer_fields = ["get_report_job_list_v1:data.job_id", "get_report_job_list_v1:data.report_name", "get_report_job_list_v1:data.date"]
+notes = "Заказ платный и асинхронный, на DEMO недоступен; файл сохраняется в reports/, в чат не вставляется."
+
+[[topic]]
+id = "api_quota"
+section = "reference"
+title = "Пакет запросов API"
+goal = "Узнать остаток запросов API и риск блокировки"
+examples = ["Сколько запросов к API у нас осталось в этом месяце, не заблокируют ли нас?", "Сколько запросов к API мы уже потратили?"]
+keywords = ["запрос!", "api", "апи", "пакет", "квот!"]
+tools = ["get_api_usage"]
+answer_fields = ["get_info:data.client_info.Queries", "get_info:data.methods.all", "get_info:data.client_info.PricePlan"]
+notes = "Тариф Free — 500 запросов в месяц, затем доступ приостанавливается до конца месяца."
+
+[[topic]]
+id = "account"
+section = "reference"
+title = "Роль и режим"
+goal = "Узнать свою роль, режим работы и договоры"
+examples = ["Какая у меня роль и режим работы?", "Что ты умеешь?", "Какие у меня договоры?"]
+keywords = ["роль!", "режим", "умеешь!", "можешь", "договоры!"]
+tools = ["get_account_context"]
+answer_fields = ["auth_user:data.role_name", "auth_user:data.read_only", "auth_user:data.contracts.number"]
+notes = "Изменения возможны только при changes_enabled (режим confirm и право записи аккаунта)."
+
+[[topic]]
+id = "contract_terms"
+section = "reference"
+title = "Условия договора"
+goal = "Узнать условия договора: возврат аванса, сроки документов, претензии, блокировка"
+examples = [
+  "Как нам вернуть неиспользованный аванс, если расторгаем договор?",
+  "До какого числа нужно вернуть подписанные закрывающие документы?",
+  "Как подать претензию по качеству топлива?",
+]
+keywords = ["аванс!", "растор!", "до какого числа!", "нужно вернуть", "претенз!", "условия", "качеств"]
+tools = ["lookup_knowledge"]
+answer_fields = []
+notes = "Только по выжимкам договора; пункт и редакция; без юридических гарантий."
+
+[[topic]]
+id = "dictionaries"
+section = "reference"
+title = "Справочники"
+goal = "Узнать, что значит код или какие бывают значения: статусы, схемы скидок, условия оплаты, услуги АЗС"
+examples = ["Какие бывают статусы карт?", "Что значит схема скидки в договоре?", "Какие услуги бывают на АЗС?", "Какие офисы продаж есть?"]
+keywords = ["справочник!", "какие бывают", "что значит", "что означает", "схема скидки", "услуг!", "офис!", "статусы", "статус"]
+tools = ["lookup_dictionary"]
+answer_fields = ["get_dictionary:data.result.name", "get_dictionary:data.result.code"]
+dictionaries = ["CardStatus", "ContractStatus", "DiscountScheme", "PaymentTerm", "PaymentScheme", "Services", "Office", "POIPartner", "POIType", "Goods", "ProductType", "Region"]
+notes = "Справочники бесплатны; агент сам расшифровывает ими коды в сводке договора, лимитах и регионах."
+
+[[topic]]
+id = "out_of_scope"
+section = "outside"
+title = "Вне задач"
+goal = "Вопрос не про топливные карты"
+examples = ["Какая погода в Москве?"]
+keywords = ["погод!"]
+tools = []
+answer_fields = []
+supported = false
+reply = "Это вне задач агента: он отвечает на вопросы о топливных картах и договоре."
+
+[[topic]]
+id = "money_transfer"
+section = "outside"
+title = "Перевод денег"
+goal = "Перевести деньги между договором и картой-кошельком"
+examples = ["Переведи 5000 рублей на карту", "Пополни кошелёк карты"]
+keywords = ["переведи!", "перевод!", "перевест!", "кошел!", "скинь деньги"]
+tools = []
+answer_fields = []
+supported = false
+reply = "Переводы денег агент не выполняет: это делается в личном кабинете после проверки."
+
+[[topic]]
+id = "order_cards"
+section = "outside"
+title = "Заказ карт"
+goal = "Заказать новые карты, виртуальные карты или QR"
+examples = ["Закажи 5 новых карт", "Выпусти виртуальную карту"]
+keywords = ["закажи", "новых карт", "новые карт", "выпуст", "виртуальн", "qr"]
+tools = []
+answer_fields = []
+supported = false
+reply = "Выпуск и заказ карт агент не выполняет: используйте личный кабинет или менеджера."
+
+[[topic]]
+id = "fuel_consumption"
+section = "outside"
+title = "Расход на 100 км"
+goal = "Узнать расход топлива на 100 км"
+examples = ["Какой расход на 100 км у Газели?"]
+keywords = ["100 км!", "на сотню!", "пробег!", "gps"]
+tools = []
+answer_fields = []
+supported = false
+reply = "Пробега и GPS в API нет, поэтому расход на 100 км не посчитать: нужна интеграция с телематикой."

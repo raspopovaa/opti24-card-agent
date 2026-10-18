@@ -65,9 +65,8 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     ) -> str:
         """Заказать транзакционный отчёт за период. ИЗМЕНЯЕТ ДАННЫЕ, платно.
 
-        Отчёт формируется асинхронно: вернёт job_id, статус смотри
-        get_report_status. format: xlsx, xml, pdf или csv. Если указан email,
-        отчёт уйдёт на него; без email доступен по ссылке в личном кабинете.
+        Асинхронно: вернёт job_id для get_report_status. format: xlsx, xml, pdf
+        или csv. С email отчёт уйдёт на почту, без него — по ссылке в кабинете.
         """
         if problem := _check_dates(date_from, date_to):
             return _json({"error": "bad_dates", "message": problem})

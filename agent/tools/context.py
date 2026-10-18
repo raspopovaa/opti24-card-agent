@@ -32,6 +32,8 @@ class ToolContext:
     monthly_quota: Any
     quota_payload: Any
     transactions: Any
+    dictionary: Any
+    dictionary_label: Any
     product_label: Any
     goods_label: Any
     region_label: Any
@@ -96,53 +98,40 @@ def make_context(
             tx_cache[key], _ = await load_transactions(client, budget, date_from, date_to, card_id)
         return tx_cache[key]
 
-    # Названия продуктов: справочник бесплатный, поэтому кешируем на сессию.
-    product_names: dict[str, str] = {}
+    # Справочники API бесплатны: каждый загружается один раз за сессию. Код и ID записи → название.
+    dictionaries: dict[str, list[Any]] = {}
+
+    async def dictionary(name: str) -> list[Any]:
+        """Записи справочника; пустой список, если справочник недоступен (ответ без расшифровки)."""
+        if name not in dictionaries:
+            try:
+                data = (await client.dictionaries.get_dictionary(name=name)).data
+                dictionaries[name] = list((data.result if data else None) or [])
+            except Exception:  # noqa: BLE001 — справочник не критичен для ответа
+                dictionaries[name] = []
+        return dictionaries[name]
+
+    async def dictionary_label(name: str, code: object) -> str | None:
+        """Название записи справочника по её ID или коду."""
+        if code is None or code == "":
+            return None
+        key = str(code)
+        for item in await dictionary(name):
+            if key in (str(item.id), str(getattr(item, "code", None) or "")):
+                return str(item.name or item.value or item.id)
+        return None
 
     async def product_label(code: str | None) -> str | None:
-        if not code:
-            return None
-        if not product_names:
-            try:
-                data = (await client.dictionaries.get_dictionary(name="ProductType")).data
-                for item in (data.result if data else None) or []:
-                    product_names[item.id] = item.name or item.value or item.id
-            except Exception:  # noqa: BLE001 — справочник не критичен для ответа
-                product_names["__failed__"] = ""
-        return product_names.get(code)
-
-    # Названия товаров в прайсе АЗС (справочник Goods): бесплатно, кешируем на сессию.
-    goods_names: dict[str, str] = {}
+        return await dictionary_label("ProductType", code)
 
     async def goods_label(code: str) -> str | None:
-        if not goods_names:
-            try:
-                data = (await client.dictionaries.get_dictionary(name="Goods")).data
-                for item in (data.result if data else None) or []:
-                    label = item.name or item.value or item.id
-                    goods_names[item.id] = label
-                    if item.code:
-                        goods_names[item.code] = label
-            except APIError:
-                goods_names["__failed__"] = ""
-        return goods_names.get(code)
+        return await dictionary_label("Goods", code)
 
     # Регион АЗС: ID АЗС -> название региона. Справочник и АЗС бесплатны, кешируем на сессию.
-    region_names: dict[str, str] = {}
     poi_regions: dict[str, str] = {}
 
     async def region_label(code: str) -> str:
-        if not region_names:
-            try:
-                data = (await client.dictionaries.get_dictionary(name="Region")).data
-                for item in (data.result if data else None) or []:
-                    label = item.name or item.value or item.id
-                    region_names[item.id] = label
-                    if item.code:
-                        region_names[item.code] = label
-            except APIError:
-                region_names["__failed__"] = ""
-        return region_names.get(code) or f"регион {code}"
+        return await dictionary_label("Region", code) or f"регион {code}"
 
     async def regions_for(poi_ids: set[str]) -> tuple[dict[str, str], int]:
         """Регионы для АЗС из кеша и до common.MAX_POI_LOOKUPS новых запросов; второе — сколько АЗС не проверено."""
@@ -251,6 +240,8 @@ def make_context(
         monthly_quota=monthly_quota,
         quota_payload=quota_payload,
         transactions=transactions,
+        dictionary=dictionary,
+        dictionary_label=dictionary_label,
         product_label=product_label,
         goods_label=goods_label,
         region_label=region_label,

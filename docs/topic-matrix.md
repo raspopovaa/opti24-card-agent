@@ -14,7 +14,7 @@
    подсказки нет: модель сама выбирает тему по каталогу разделов и тем в инструкции и открывает
    её или весь раздел вызовом `open_toolbox`, который скажет, что спросить у пользователя.
 3. Без обязательного параметра (например, карты для разбора отказа) модель сначала спрашивает
-   пользователя и не тратит платные запросы. У Claude видны все инструменты, каталог тем — в инструкции.
+   пользователя и не тратит тарифицируемые запросы. У Claude видны все инструменты, каталог тем — в инструкции.
 
 Как пополнять: добавьте реальный вопрос клиента в `examples` подходящей темы (или заведите
 тему), допишите `keywords`, запустите `pytest` и этот скрипт. Реальные вопросы можно собирать
@@ -26,24 +26,24 @@
 
 | Раздел | Тема | Цель | Инструменты | Методы SDK | Что спросить |
 |---|---|---|---|---|---|
-| Деньги и договор | **Баланс договора** (`balance`) | Узнать, сколько денег осталось на договоре и хватит ли их | `get_contract_summary` | `get_contract_data` (платный), `get_dictionary` (бесплатный) | — |
-| Расходы и цены | **Расходы** (`spending`) | Узнать, сколько потратили на топливо за период | `spending_report` | `get_transactions_v2` (платный), `get_card_transactions_v2` (платный) | период — по умолчанию текущий месяц |
-| Расходы и цены | **Цена топлива** (`fuel_price`) | Узнать реальную цену литра топлива с учётом скидки и сервисного сбора | `fuel_price_analytics`, `get_contract_summary` | `get_transactions_v2` (платный), `get_card_transactions_v2` (платный), `get_azs_list_v1` (бесплатный), `get_dictionary` (бесплатный), `get_contract_data` (платный) | период — по умолчанию текущий месяц; вид топлива — если есть |
-| Расходы и цены | **Скидка** (`discount`) | Узнать размер скидки: фактическую по операциям и по условиям договора | `fuel_price_analytics`, `get_contract_summary`, `lookup_knowledge` | `get_transactions_v2` (платный), `get_card_transactions_v2` (платный), `get_azs_list_v1` (бесплатный), `get_dictionary` (бесплатный), `get_contract_data` (платный) | период — по умолчанию текущий месяц |
-| Расходы и цены | **Цены по регионам** (`cheaper_region`) | Сравнить цену и литры по регионам и понять, где заправляться выгоднее | `fuel_price_analytics` | `get_transactions_v2` (платный), `get_card_transactions_v2` (платный), `get_azs_list_v1` (бесплатный), `get_dictionary` (бесплатный) | период — по умолчанию текущий месяц; вид топлива — если есть |
-| Расходы и цены | **Подозрительные заправки** (`suspicious`) | Найти подозрительные заправки: ночные, крупные, частые, дорогие | `find_suspicious_fills` | `get_transactions_v2` (платный), `get_card_transactions_v2` (платный) | период — по умолчанию текущий месяц |
-| Расходы и цены | **Заправки и операции** (`transactions`) | Посмотреть конкретные заправки и операции | `list_transactions` | `get_transactions_v2` (платный), `get_card_transactions_v2` (платный) | период — по умолчанию текущий месяц; карта — если есть |
+| Деньги и договор | **Баланс договора** (`balance`) | Узнать, сколько денег осталось на договоре и хватит ли их | `get_contract_summary` | `get_contract_data` (тарифицируемый), `get_dictionary` (бесплатный) | — |
+| Расходы и цены | **Расходы** (`spending`) | Узнать, сколько потратили на топливо за период | `spending_report` | `get_transactions_v2` (тарифицируемый), `get_card_transactions_v2` (тарифицируемый) | период — по умолчанию текущий месяц |
+| Расходы и цены | **Цена топлива** (`fuel_price`) | Узнать реальную цену литра топлива с учётом скидки и сервисного сбора | `fuel_price_analytics`, `get_contract_summary` | `get_transactions_v2` (тарифицируемый), `get_card_transactions_v2` (тарифицируемый), `get_azs_list_v1` (бесплатный), `get_dictionary` (бесплатный), `get_contract_data` (тарифицируемый) | период — по умолчанию текущий месяц; вид топлива — если есть |
+| Расходы и цены | **Скидка** (`discount`) | Узнать размер скидки: фактическую по операциям и по условиям договора | `fuel_price_analytics`, `get_contract_summary`, `lookup_knowledge` | `get_transactions_v2` (тарифицируемый), `get_card_transactions_v2` (тарифицируемый), `get_azs_list_v1` (бесплатный), `get_dictionary` (бесплатный), `get_contract_data` (тарифицируемый) | период — по умолчанию текущий месяц |
+| Расходы и цены | **Цены по регионам** (`cheaper_region`) | Сравнить цену и литры по регионам и понять, где заправляться выгоднее | `fuel_price_analytics` | `get_transactions_v2` (тарифицируемый), `get_card_transactions_v2` (тарифицируемый), `get_azs_list_v1` (бесплатный), `get_dictionary` (бесплатный) | период — по умолчанию текущий месяц; вид топлива — если есть |
+| Расходы и цены | **Подозрительные заправки** (`suspicious`) | Найти подозрительные заправки: ночные, крупные, частые, дорогие | `find_suspicious_fills` | `get_transactions_v2` (тарифицируемый), `get_card_transactions_v2` (тарифицируемый) | период — по умолчанию текущий месяц |
+| Расходы и цены | **Заправки и операции** (`transactions`) | Посмотреть конкретные заправки и операции | `list_transactions` | `get_transactions_v2` (тарифицируемый), `get_card_transactions_v2` (тарифицируемый) | период — по умолчанию текущий месяц; карта — если есть |
 | Расходы и цены | **Операция по номеру** (`transaction_detail`) | Разобрать одну операцию по её номеру | `get_transaction_detail` | `get_transaction_detail` (бесплатный) | номер операции — спросить: «Какой номер операции разобрать?» |
 | Карты | **Карты и группы** (`cards`) | Найти карту или посмотреть список карт и групп | `list_cards`, `list_card_groups` | `get_cards_v2` (бесплатный), `get_card_groups` (бесплатный) | — |
-| Карты | **Профиль карты** (`card_profile`) | Узнать, кто водитель карты, когда и где она использовалась | `list_cards`, `get_card_profile` | `get_cards_v2` (бесплатный), `get_card_detail` (платный), `get_card_drivers` (платный), `get_limits` (бесплатный), `get_dictionary` (бесплатный) | карта — спросить: «О какой карте речь? Номер, ID или комментарий (машина, водитель).» |
-| Правила заправки | **Лимиты и правила** (`limits`) | Посмотреть лимиты, региональные правила и товарные ограничители | `get_limits`, `get_access_rules`, `list_cards` | `get_limits` (бесплатный), `get_dictionary` (бесплатный), `get_region_limits` (платный), `get_restrictions` (платный), `get_cards_v2` (бесплатный) | — |
-| Отказы на АЗС | **Отказ на АЗС** (`refusal`) | Понять, почему карту не приняли на АЗС | `diagnose_fueling` | `get_cards_v2` (бесплатный), `get_card_detail` (платный), `get_limits` (бесплатный), `get_contract_data` (платный), `get_region_limits` (платный), `get_restrictions` (платный), `get_azs_list_v1` (бесплатный), `check_purchase` (бесплатный, только рабочий API), `get_dictionary` (бесплатный) | карта — спросить: «По какой карте отказ? Номер, ID или комментарий.»; код ответа из чека — если есть; АЗС — если есть; вид топлива — если есть; литры — если есть |
-| Карты | **Блокировка карт** (`block_card`) | Заблокировать или разблокировать карту | `list_cards`, `block_cards` | `get_cards_v2` (бесплатный), `block_card` (платный) | карта — спросить: «Какие карты заблокировать? Номера или комментарии, массовая блокировка не выполняется.»; причина — спросить: «Причина блокировки (например, увольнение водителя или утеря карты)?» |
-| Карты | **Комментарий карты** (`card_comment`) | Подписать карту: машина, водитель, подразделение | `list_cards`, `set_card_comment` | `get_cards_v2` (бесплатный), `set_card_comment` (платный) | карта — спросить: «Какую карту подписать? Номер, ID или текущий комментарий.» |
-| Правила заправки | **Изменение правил** (`change_rules`) | Изменить лимит, разрешить или запретить регион или вид топлива | `get_access_rules`, `set_limit`, `set_region_limit`, `set_restriction`, `remove_limit`, `remove_region_limit`, `remove_restriction` | `get_limits` (бесплатный), `get_region_limits` (платный), `get_restrictions` (платный), `get_dictionary` (бесплатный), `set_limit` (платный), `set_region_limit` (платный), `set_restriction` (платный, только рабочий API), `remove_limit` (платный), `remove_region_limit` (платный), `remove_restriction` (платный) | карта — спросить: «Для какой карты или группы изменить правило?»; размер — если есть |
-| Деньги и договор | **Платежи** (`payments`) | Посмотреть платежи по договору | `get_finance` | `get_payments` (платный), `get_invoices` (бесплатный), `get_documents` (бесплатный, только рабочий API) | период — по умолчанию текущий месяц |
-| Деньги и договор | **Счета и документы** (`documents`) | Найти счета и закрывающие документы | `get_finance` | `get_payments` (платный), `get_invoices` (бесплатный), `get_documents` (бесплатный, только рабочий API) | период — по умолчанию текущий месяц |
-| Отчёты | **Отчёты** (`reports`) | Заказать, проверить или скачать отчёт | `get_report_status`, `order_fuel_report`, `download_fuel_report` | `get_report_job_list_v1` (бесплатный), `order_report_v1` (платный, только рабочий API), `download_report_file_v1` (платный, только рабочий API) | — |
+| Карты | **Профиль карты** (`card_profile`) | Узнать, кто водитель карты, когда и где она использовалась | `list_cards`, `get_card_profile` | `get_cards_v2` (бесплатный), `get_card_detail` (тарифицируемый), `get_card_drivers` (тарифицируемый), `get_limits` (бесплатный), `get_dictionary` (бесплатный) | карта — спросить: «О какой карте речь? Номер, ID или комментарий (машина, водитель).» |
+| Правила заправки | **Лимиты и правила** (`limits`) | Посмотреть лимиты, региональные правила и товарные ограничители | `get_limits`, `get_access_rules`, `list_cards` | `get_limits` (бесплатный), `get_dictionary` (бесплатный), `get_region_limits` (тарифицируемый), `get_restrictions` (тарифицируемый), `get_cards_v2` (бесплатный) | — |
+| Отказы на АЗС | **Отказ на АЗС** (`refusal`) | Понять, почему карту не приняли на АЗС | `diagnose_fueling` | `get_cards_v2` (бесплатный), `get_card_detail` (тарифицируемый), `get_limits` (бесплатный), `get_contract_data` (тарифицируемый), `get_region_limits` (тарифицируемый), `get_restrictions` (тарифицируемый), `get_azs_list_v1` (бесплатный), `check_purchase` (бесплатный, только рабочий API), `get_dictionary` (бесплатный) | карта — спросить: «По какой карте отказ? Номер, ID или комментарий.»; код ответа из чека — если есть; АЗС — если есть; вид топлива — если есть; литры — если есть |
+| Карты | **Блокировка карт** (`block_card`) | Заблокировать или разблокировать карту | `list_cards`, `block_cards` | `get_cards_v2` (бесплатный), `block_card` (тарифицируемый) | карта — спросить: «Какие карты заблокировать? Номера или комментарии, массовая блокировка не выполняется.»; причина — спросить: «Причина блокировки (например, увольнение водителя или утеря карты)?» |
+| Карты | **Комментарий карты** (`card_comment`) | Подписать карту: машина, водитель, подразделение | `list_cards`, `set_card_comment` | `get_cards_v2` (бесплатный), `set_card_comment` (тарифицируемый) | карта — спросить: «Какую карту подписать? Номер, ID или текущий комментарий.» |
+| Правила заправки | **Изменение правил** (`change_rules`) | Изменить лимит, разрешить или запретить регион или вид топлива | `get_access_rules`, `set_limit`, `set_region_limit`, `set_restriction`, `remove_limit`, `remove_region_limit`, `remove_restriction` | `get_limits` (бесплатный), `get_region_limits` (тарифицируемый), `get_restrictions` (тарифицируемый), `get_dictionary` (бесплатный), `set_limit` (тарифицируемый), `set_region_limit` (тарифицируемый), `set_restriction` (тарифицируемый, только рабочий API), `remove_limit` (тарифицируемый), `remove_region_limit` (тарифицируемый), `remove_restriction` (тарифицируемый) | карта — спросить: «Для какой карты или группы изменить правило?»; размер — если есть |
+| Деньги и договор | **Платежи** (`payments`) | Посмотреть платежи по договору | `get_finance` | `get_payments` (тарифицируемый), `get_invoices` (бесплатный), `get_documents` (бесплатный, только рабочий API) | период — по умолчанию текущий месяц |
+| Деньги и договор | **Счета и документы** (`documents`) | Найти счета и закрывающие документы | `get_finance` | `get_payments` (тарифицируемый), `get_invoices` (бесплатный), `get_documents` (бесплатный, только рабочий API) | период — по умолчанию текущий месяц |
+| Отчёты | **Отчёты** (`reports`) | Заказать, проверить или скачать отчёт | `get_report_status`, `order_fuel_report`, `download_fuel_report` | `get_report_job_list_v1` (бесплатный), `order_report_v1` (тарифицируемый, только рабочий API), `download_report_file_v1` (тарифицируемый, только рабочий API) | — |
 | Условия, справочники и доступ | **Пакет запросов API** (`api_quota`) | Узнать остаток запросов API и риск блокировки | `get_api_usage` | `get_info` (бесплатный) | — |
 | Условия, справочники и доступ | **Роль и режим** (`account`) | Узнать свою роль, режим работы и договоры | `get_account_context` | `auth_user` (бесплатный), `get_info` (бесплатный) | — |
 | Условия, справочники и доступ | **Условия договора** (`contract_terms`) | Узнать условия договора: возврат аванса, сроки документов, претензии, блокировка | `lookup_knowledge` | без API | — |
@@ -66,7 +66,7 @@
 
 Инструменты и методы SDK:
 
-- `get_contract_summary` → `get_contract_data` (платный), `get_dictionary` (бесплатный)
+- `get_contract_summary` → `get_contract_data` (тарифицируемый), `get_dictionary` (бесплатный)
 
 Данные из ответа SDK:
 
@@ -90,7 +90,7 @@
 
 Инструменты и методы SDK:
 
-- `spending_report` → `get_transactions_v2` (платный), `get_card_transactions_v2` (платный)
+- `spending_report` → `get_transactions_v2` (тарифицируемый), `get_card_transactions_v2` (тарифицируемый)
 
 Данные из ответа SDK:
 
@@ -111,8 +111,8 @@
 
 Инструменты и методы SDK:
 
-- `fuel_price_analytics` → `get_transactions_v2` (платный), `get_card_transactions_v2` (платный), `get_azs_list_v1` (бесплатный), `get_dictionary` (бесплатный)
-- `get_contract_summary` → `get_contract_data` (платный), `get_dictionary` (бесплатный)
+- `fuel_price_analytics` → `get_transactions_v2` (тарифицируемый), `get_card_transactions_v2` (тарифицируемый), `get_azs_list_v1` (бесплатный), `get_dictionary` (бесплатный)
+- `get_contract_summary` → `get_contract_data` (тарифицируемый), `get_dictionary` (бесплатный)
 
 Данные из ответа SDK:
 
@@ -137,8 +137,8 @@
 
 Инструменты и методы SDK:
 
-- `fuel_price_analytics` → `get_transactions_v2` (платный), `get_card_transactions_v2` (платный), `get_azs_list_v1` (бесплатный), `get_dictionary` (бесплатный)
-- `get_contract_summary` → `get_contract_data` (платный), `get_dictionary` (бесплатный)
+- `fuel_price_analytics` → `get_transactions_v2` (тарифицируемый), `get_card_transactions_v2` (тарифицируемый), `get_azs_list_v1` (бесплатный), `get_dictionary` (бесплатный)
+- `get_contract_summary` → `get_contract_data` (тарифицируемый), `get_dictionary` (бесплатный)
 - `lookup_knowledge` → без запросов к API
 
 Данные из ответа SDK:
@@ -162,7 +162,7 @@
 
 Инструменты и методы SDK:
 
-- `fuel_price_analytics` → `get_transactions_v2` (платный), `get_card_transactions_v2` (платный), `get_azs_list_v1` (бесплатный), `get_dictionary` (бесплатный)
+- `fuel_price_analytics` → `get_transactions_v2` (тарифицируемый), `get_card_transactions_v2` (тарифицируемый), `get_azs_list_v1` (бесплатный), `get_dictionary` (бесплатный)
 
 Данные из ответа SDK:
 
@@ -185,7 +185,7 @@
 
 Инструменты и методы SDK:
 
-- `find_suspicious_fills` → `get_transactions_v2` (платный), `get_card_transactions_v2` (платный)
+- `find_suspicious_fills` → `get_transactions_v2` (тарифицируемый), `get_card_transactions_v2` (тарифицируемый)
 
 Данные из ответа SDK:
 
@@ -206,7 +206,7 @@
 
 Инструменты и методы SDK:
 
-- `list_transactions` → `get_transactions_v2` (платный), `get_card_transactions_v2` (платный)
+- `list_transactions` → `get_transactions_v2` (тарифицируемый), `get_card_transactions_v2` (тарифицируемый)
 
 Данные из ответа SDK:
 
@@ -270,7 +270,7 @@
 Инструменты и методы SDK:
 
 - `list_cards` → `get_cards_v2` (бесплатный)
-- `get_card_profile` → `get_card_detail` (платный), `get_cards_v2` (бесплатный), `get_card_drivers` (платный), `get_limits` (бесплатный), `get_dictionary` (бесплатный)
+- `get_card_profile` → `get_card_detail` (тарифицируемый), `get_cards_v2` (бесплатный), `get_card_drivers` (тарифицируемый), `get_limits` (бесплатный), `get_dictionary` (бесплатный)
 
 Данные из ответа SDK:
 
@@ -292,7 +292,7 @@
 Инструменты и методы SDK:
 
 - `get_limits` → `get_limits` (бесплатный), `get_dictionary` (бесплатный)
-- `get_access_rules` → `get_limits` (бесплатный), `get_region_limits` (платный), `get_restrictions` (платный), `get_dictionary` (бесплатный)
+- `get_access_rules` → `get_limits` (бесплатный), `get_region_limits` (тарифицируемый), `get_restrictions` (тарифицируемый), `get_dictionary` (бесплатный)
 - `list_cards` → `get_cards_v2` (бесплатный)
 
 Данные из ответа SDK:
@@ -311,7 +311,7 @@
 
 Параметры: —.
 
-Важно: Карту, группу или весь договор. Региональные лимиты и ограничители — 2 платных запроса.
+Важно: Карту, группу или весь договор. Региональные лимиты и ограничители — 2 тарифицируемых запроса.
 
 ### Отказ на АЗС (`refusal`)
 
@@ -321,7 +321,7 @@
 
 Инструменты и методы SDK:
 
-- `diagnose_fueling` → `get_cards_v2` (бесплатный), `get_card_detail` (платный), `get_limits` (бесплатный), `get_contract_data` (платный), `get_region_limits` (платный), `get_restrictions` (платный), `get_azs_list_v1` (бесплатный), `check_purchase` (бесплатный, только рабочий API), `get_dictionary` (бесплатный)
+- `diagnose_fueling` → `get_cards_v2` (бесплатный), `get_card_detail` (тарифицируемый), `get_limits` (бесплатный), `get_contract_data` (тарифицируемый), `get_region_limits` (тарифицируемый), `get_restrictions` (тарифицируемый), `get_azs_list_v1` (бесплатный), `check_purchase` (бесплатный, только рабочий API), `get_dictionary` (бесплатный)
 
 Данные из ответа SDK:
 
@@ -347,7 +347,7 @@
 Инструменты и методы SDK:
 
 - `list_cards` → `get_cards_v2` (бесплатный)
-- `block_cards` → `block_card` (платный)
+- `block_cards` → `block_card` (тарифицируемый)
 
 Данные из ответа SDK:
 
@@ -367,7 +367,7 @@
 Инструменты и методы SDK:
 
 - `list_cards` → `get_cards_v2` (бесплатный)
-- `set_card_comment` → `set_card_comment` (платный)
+- `set_card_comment` → `set_card_comment` (тарифицируемый)
 
 Данные из ответа SDK:
 
@@ -385,13 +385,13 @@
 
 Инструменты и методы SDK:
 
-- `get_access_rules` → `get_limits` (бесплатный), `get_region_limits` (платный), `get_restrictions` (платный), `get_dictionary` (бесплатный)
-- `set_limit` → `set_limit` (платный)
-- `set_region_limit` → `set_region_limit` (платный)
-- `set_restriction` → `set_restriction` (платный, только рабочий API)
-- `remove_limit` → `remove_limit` (платный)
-- `remove_region_limit` → `remove_region_limit` (платный)
-- `remove_restriction` → `remove_restriction` (платный)
+- `get_access_rules` → `get_limits` (бесплатный), `get_region_limits` (тарифицируемый), `get_restrictions` (тарифицируемый), `get_dictionary` (бесплатный)
+- `set_limit` → `set_limit` (тарифицируемый)
+- `set_region_limit` → `set_region_limit` (тарифицируемый)
+- `set_restriction` → `set_restriction` (тарифицируемый, только рабочий API)
+- `remove_limit` → `remove_limit` (тарифицируемый)
+- `remove_region_limit` → `remove_region_limit` (тарифицируемый)
+- `remove_restriction` → `remove_restriction` (тарифицируемый)
 
 Данные из ответа SDK:
 
@@ -411,7 +411,7 @@
 
 Инструменты и методы SDK:
 
-- `get_finance` → `get_payments` (платный), `get_invoices` (бесплатный), `get_documents` (бесплатный, только рабочий API)
+- `get_finance` → `get_payments` (тарифицируемый), `get_invoices` (бесплатный), `get_documents` (бесплатный, только рабочий API)
 
 Данные из ответа SDK:
 
@@ -421,7 +421,7 @@
 
 Параметры: период — по умолчанию текущий месяц.
 
-Важно: Платежи — платный запрос; последний платёж есть и в сводке договора.
+Важно: Платежи — тарифицируемый запрос; последний платёж есть и в сводке договора.
 
 ### Счета и документы (`documents`)
 
@@ -431,7 +431,7 @@
 
 Инструменты и методы SDK:
 
-- `get_finance` → `get_payments` (платный), `get_invoices` (бесплатный), `get_documents` (бесплатный, только рабочий API)
+- `get_finance` → `get_payments` (тарифицируемый), `get_invoices` (бесплатный), `get_documents` (бесплатный, только рабочий API)
 
 Данные из ответа SDK:
 
@@ -454,8 +454,8 @@
 Инструменты и методы SDK:
 
 - `get_report_status` → `get_report_job_list_v1` (бесплатный)
-- `order_fuel_report` → `order_report_v1` (платный, только рабочий API)
-- `download_fuel_report` → `download_report_file_v1` (платный, только рабочий API)
+- `order_fuel_report` → `order_report_v1` (тарифицируемый, только рабочий API)
+- `download_fuel_report` → `download_report_file_v1` (тарифицируемый, только рабочий API)
 
 Данные из ответа SDK:
 
@@ -465,7 +465,7 @@
 
 Параметры: —.
 
-Важно: Заказ платный и асинхронный, на DEMO недоступен; файл сохраняется в reports/, в чат не вставляется.
+Важно: Заказ тарифицируемый и асинхронный, на DEMO недоступен; файл сохраняется в reports/, в чат не вставляется.
 
 ### Пакет запросов API (`api_quota`)
 

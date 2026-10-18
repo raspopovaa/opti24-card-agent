@@ -223,7 +223,7 @@ def hint(found: Classification) -> str:
         if param.default == "current_month":
             parts.append(f"{title} не указан — возьми текущий месяц с 1-го числа по сегодня и назови его в ответе")
         elif param.ask:
-            parts.append(f"не указан параметр «{title}» — сначала спроси: «{param.ask}», платные инструменты до ответа не вызывай")
+            parts.append(f"не указан параметр «{title}» — сначала спроси: «{param.ask}», тарифицируемые инструменты до ответа не вызывай")
     return "[Подсказка: " + "; ".join(parts) + ".]"
 
 

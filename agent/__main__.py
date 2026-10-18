@@ -71,7 +71,7 @@ async def main() -> None:
             u = agent.usage
             print(
                 f"\nТокены: вход {u.input_tokens}, из кеша {u.cache_read_tokens}, "
-                f"выход {u.output_tokens}; платных вызовов API: {agent.budget.spent}"
+                f"выход {u.output_tokens}; тарифицируемых вызовов API: {agent.budget.spent}"
             )
             await opti24.auth.logoff()
 

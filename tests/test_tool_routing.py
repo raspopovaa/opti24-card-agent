@@ -180,7 +180,7 @@ def test_unknown_argument_names_are_refused_before_the_tool_runs(tmp_path: Path)
     raw = asyncio.run(_run_tool(by_name, "spending_report", '{"day_from": "2026-08-01", "day_to": "2026-08-31"}'))
     out = json.loads(raw)
     assert out["error"] == "unknown_argument" and "date_from" in out["message"]
-    assert budget.spent == 0  # ни одного платного запроса на угадывание
+    assert budget.spent == 0  # ни одного тарифицируемого запроса на угадывание
 
 
 def test_non_object_json_arguments_do_not_crash_the_loop(tmp_path: Path) -> None:

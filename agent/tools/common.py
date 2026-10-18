@@ -73,7 +73,7 @@ async def load_transactions(
     card_id: str | None = None,
     max_pages: int | None = None,
 ) -> tuple[list[Any], int]:
-    """Операции за период и их общее число; страница из 100 операций — один платный запрос.
+    """Операции за период и их общее число; страница из 100 операций — один тарифный запрос.
 
     При ``max_pages`` загрузка останавливается раньше, и тогда длина списка
     меньше общего числа: вызывающий код видит, что данные неполные.
@@ -102,7 +102,7 @@ async def load_transactions(
                 )
         except APIError as exc:
             if exc.http_status_code == 405:
-                budget.spent -= 1  # отклонённый запрос не считаем платным
+                budget.spent -= 1  # отклонённый запрос не считаем тарифным
                 raise TransactionsUnavailableError(
                     "Сервер ответил HTTP 405: на DEMO операции не отдаются (так отвечает "
                     "сам стенд, это видно в проверках opti24-live-check). Операции доступны "

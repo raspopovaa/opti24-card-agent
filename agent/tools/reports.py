@@ -63,7 +63,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         card_ids: list[str] | None = None,
         group_ids: list[str] | None = None,
     ) -> str:
-        """Заказать транзакционный отчёт за период. ИЗМЕНЯЕТ ДАННЫЕ, платно.
+        """Заказать транзакционный отчёт за период. ИЗМЕНЯЕТ ДАННЫЕ, по тарифу.
 
         Асинхронно: вернёт job_id для get_report_status. format: xlsx, xml, pdf
         или csv. С email отчёт уйдёт на почту, без него — по ссылке в кабинете.
@@ -85,7 +85,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             + (f" по картам {len(cards)}" if cards else "")
             + (f" по группам {len(groups)}" if groups else "")
             + (f" и отправить на {email}" if email else "")
-            + "? Отчёт платный и формируется асинхронно."
+            + "? Отчёт тарифный и формируется асинхронно."
         )
         denied = await confirm_write("order_fuel_report", summary, len(cards or groups or [1]))
         if denied:
@@ -116,7 +116,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     async def download_fuel_report(
         job_id: str, report_format: str = "xlsx", destination: str | None = None
     ) -> str:
-        """Скачать готовый отчёт в папку reports. Платный запрос API.
+        """Скачать готовый отчёт в папку reports. Тарифный запрос API.
 
         Сначала проверь get_report_status: job_id должен быть готов. Файл
         сохраняется локально и не вставляется в чат. report_format нужен только

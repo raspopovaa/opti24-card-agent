@@ -72,9 +72,9 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     async def get_card_profile(
         card_id: str, include_drivers: bool = True, include_limits: bool = True
     ) -> str:
-        """Карта, водитель, группа и лимиты. Платно: 1–2 запроса API.
+        """Карта, водитель, группа и лимиты. По тарифу: 1–2 запроса.
 
-        Вызывай после list_cards. include_drivers=False экономит платный запрос.
+        Вызывай после list_cards. include_drivers=False экономит запрос.
         """
         try:
             budget.spend()
@@ -208,7 +208,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     async def set_card_comment(card_id: str, comment: str) -> str:
         """Установить комментарий карты (водитель, машина). ИЗМЕНЯЕТ ДАННЫЕ.
 
-        Платный запрос, нужно подтверждение человека. Комментарий 1–90 символов.
+        Тарифный запрос, нужно подтверждение человека. Комментарий 1–90 символов.
         """
         card_id = str(card_id).strip()
         comment = str(comment).strip()

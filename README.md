@@ -87,12 +87,18 @@ read -s "YANDEX_API_KEY?Ключ Yandex Cloud: " && export YANDEX_API_KEY YANDEX
 python -m agent --provider yandex
 ```
 
-**Корпоративный шлюз LiteLLM**, если по правилам компании допустимы только корпоративные модели:
+**Локальный сервер vLLM**: модель работает на вашем компьютере или сервере, данные не уходят наружу.
+Сервер запускается отдельно, агент подключается к нему по OpenAI-совместимому адресу
+`http://localhost:8000/v1`. Флаги `--enable-auto-tool-choice` и `--tool-call-parser hermes`
+нужны, чтобы модель могла вызывать инструменты:
 
 ```bash
-read -s "GATEWAY_API_KEY?Ключ шлюза: " && export GATEWAY_API_KEY GATEWAY_BASE_URL=https://gateway.example.ru/v1
-python -m agent --provider gateway --model <модель-из-шлюза>
+vllm serve Qwen/Qwen2.5-7B-Instruct --enable-auto-tool-choice --tool-call-parser hermes
+python -m agent --provider vllm --model Qwen/Qwen2.5-7B-Instruct
 ```
+
+Другой адрес задайте через `AGENT_BASE_URL`. Имя модели должно совпадать с тем, что сервер
+отдаёт при запуске. Ключ не нужен, пока сервер запущен без `--api-key`.
 
 **Локальная модель через Ollama**: ключи и интернет не нужны, данные остаются на компьютере.
 Небольшие модели (3–4 млрд параметров) плохо выбирают инструменты, проверьте их на `evals/`:
@@ -233,7 +239,7 @@ OPTI24_ENV_FILE=~/.opti24-production.env AGENT_CONTRACT_ID=<ID-договора>
    номера операции, причины блокировки), агент сначала спрашивает и не тратит тарифицируемые запросы.
    Период для расходов по умолчанию — текущий месяц, и агент называет его в ответе.
 
-У OpenAI-совместимых провайдеров (Cloud.ru, DeepSeek, YandexGPT, корпоративный шлюз, Ollama) модель видит
+У OpenAI-совместимых провайдеров (Cloud.ru, DeepSeek, YandexGPT, Ollama, vLLM) модель видит
 схемы ядра (`get_account_context`, `lookup_knowledge`, `get_api_usage`) и инструментов тем; в режиме
 `read_only` инструменты, меняющие данные, не показываются. У Claude видны все инструменты: схемы
 дёшевы из кеша, а полный набор проверен на evals. Отключить деление можно `AGENT_TOOL_ROUTING=off`.
@@ -453,9 +459,9 @@ Haiku с кешем дешевле Opus без кеша примерно в 75 �
 | Китай | Zhipu GLM | `glm` | `ZHIPUAI_API_KEY` | `glm-4.6` |
 | Россия | YandexGPT (Yandex AI Studio) | `yandex` | `YANDEX_API_KEY`, `YANDEX_FOLDER_ID` | `yandexgpt/latest` |
 | Россия | GigaChat (Сбер) | `gigachat` | ключ GigaChat в прокси gpt2giga | `GigaChat-2-Max` |
-| Компания | Корпоративный шлюз LiteLLM | `gateway` | `GATEWAY_API_KEY`, `GATEWAY_BASE_URL`, `AGENT_MODEL` | нет, задаётся явно |
 | Любая | Любой OpenAI-совместимый API | `custom` | `AGENT_API_KEY`, `AGENT_BASE_URL`, `AGENT_MODEL` | нет, задаётся явно |
 | Локально | Ollama | `ollama` | ключ не нужен | `qwen3:8b` |
+| Локально | vLLM | `vllm` | ключ не нужен, `AGENT_MODEL` задаётся явно | нет, задаётся явно |
 
 ```
 python -m agent --provider claude                       # по умолчанию, Haiku 5.5
@@ -465,6 +471,7 @@ python -m agent --provider deepseek                     # DEEPSEEK_API_KEY
 python -m agent --provider yandex                       # YANDEX_API_KEY и YANDEX_FOLDER_ID
 python -m agent --provider gigachat                     # прокси gpt2giga на localhost:8090
 python -m agent --provider ollama --model qwen3:8b      # локально, ключ не нужен
+python -m agent --provider vllm --model Qwen/Qwen2.5-7B-Instruct  # локальный vLLM, ключ не нужен
 ```
 
 Все провайдеры, кроме Claude, подключены через OpenAI-совместимый интерфейс
@@ -484,22 +491,15 @@ python -m agent --provider ollama --model qwen3:8b      # локально, кл
 у агента. Если прокси работает на другом адресе или требует свой ключ, используйте
 провайдера `custom`.
 
-**Корпоративный шлюз.** Если в компании разрешены только
-корпоративные модели через шлюз LiteLLM, используйте провайдер gateway. Внешние провайдеры (DeepSeek, OpenAI и
-другие из таблицы) в этом случае не используйте. Агент подключается к шлюзу как к
-OpenAI-совместимому адресу:
+**Локальный сервер vLLM.** Агент подключается к OpenAI-совместимому адресу сервера.
+Обязательны `AGENT_MODEL` (имя модели на сервере) и адрес, если он не `http://localhost:8000/v1`:
 
 ```
-AGENT_PROVIDER=gateway GATEWAY_BASE_URL=https://llm-gateway.example.ru/v1 GATEWAY_API_KEY=... AGENT_MODEL=<модель-из-шлюза> python -m agent
+AGENT_PROVIDER=vllm AGENT_BASE_URL=http://localhost:8000/v1 AGENT_MODEL=Qwen/Qwen2.5-7B-Instruct python -m agent
 ```
 
-- `GATEWAY_BASE_URL` — адрес шлюза LiteLLM с путём `/v1`, его выдаёт администратор платформы.
-- `GATEWAY_API_KEY` — ключ шлюза (виртуальный ключ LiteLLM), а не ключ внешнего провайдера.
-- `AGENT_MODEL` — имя модели так, как оно опубликовано в шлюзе. Значения по умолчанию нет.
-- Модель за шлюзом тоже должна уметь вызывать инструменты: перед работой прогоните
-  `AGENT_PROVIDER=gateway python evals/run_evals.py --runs 3`.
-- Цензор шлюза может отклонить запрос. Это решение шлюза, а не ошибка агента; обходить
-  его не нужно.
+Перед работой прогоните оценку: `AGENT_PROVIDER=vllm python evals/run_evals.py --runs 3`.
+Модель, которая плохо вызывает инструменты, даст неверные ответы, поэтому проверяйте её на `evals/`.
 
 **Любой другой API** с OpenAI-совместимым интерфейсом и вызовом инструментов (tools)
 подключается так:

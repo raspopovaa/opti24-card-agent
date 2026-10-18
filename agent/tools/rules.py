@@ -66,7 +66,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     async def get_access_rules(
         card_id: str | None = None, group_id: str | None = None
     ) -> str:
-        """Лимиты, региональные лимиты и товарные ограничители. 2 платных запроса.
+        """Лимиты, региональные лимиты и товарные ограничители. 2 тарифных запроса.
 
         Используй перед изменением правил. Без card_id и group_id — правила договора.
         """
@@ -141,7 +141,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         transactions_count: int | None = None,
         limit_id: str | None = None,
     ) -> str:
-        """Установить или изменить продуктовый лимит. ИЗМЕНЯЕТ ДАННЫЕ, платно.
+        """Установить или изменить продуктовый лимит. ИЗМЕНЯЕТ ДАННЫЕ, по тарифу.
 
         Нужно указать ровно одну цель (card_id или group_id), хотя бы один размер
         (liters и/или rubles) и период. period_type: 3 — сутки, 7 — неделя, другие
@@ -234,7 +234,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         limit_type: int = 0,
         region_limit_id: str | None = None,
     ) -> str:
-        """Разрешить или запретить регион/АЗС. ИЗМЕНЯЕТ ДАННЫЕ, платно.
+        """Разрешить или запретить регион/АЗС. ИЗМЕНЯЕТ ДАННЫЕ, по тарифу.
 
         limit_type: 1 — разрешающий, 2 — запрещающий. Нужно указать ровно одну
         цель (card_id или group_id). region_limit_id меняет существующее правило.
@@ -288,7 +288,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         restriction_type: int = 0,
         restriction_id: str | None = None,
     ) -> str:
-        """Разрешить или запретить продукт. ИЗМЕНЯЕТ ДАННЫЕ, платно.
+        """Разрешить или запретить продукт. ИЗМЕНЯЕТ ДАННЫЕ, по тарифу.
 
         restriction_type: 1 — разрешающий, 2 — запрещающий. product_type — код
         продукта из get_dictionary("ProductType"), например 1-CK231. Нужно
@@ -336,7 +336,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
 
     @beta_async_tool
     async def remove_limit(limit_id: str, group_id: str | None = None) -> str:
-        """Удалить продуктовый лимит. ИЗМЕНЯЕТ ДАННЫЕ, платно, необратимо."""
+        """Удалить продуктовый лимит. ИЗМЕНЯЕТ ДАННЫЕ, по тарифу, необратимо."""
         limit_id = str(limit_id).strip()
         if not limit_id:
             return _json({"error": "bad_request", "message": "Нужен limit_id."})
@@ -360,7 +360,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     async def remove_region_limit(
         region_limit_id: str, group_id: str | None = None
     ) -> str:
-        """Удалить региональный лимит. ИЗМЕНЯЕТ ДАННЫЕ, платно, необратимо."""
+        """Удалить региональный лимит. ИЗМЕНЯЕТ ДАННЫЕ, по тарифу, необратимо."""
         region_limit_id = str(region_limit_id).strip()
         if not region_limit_id:
             return _json({"error": "bad_request", "message": "Нужен region_limit_id."})
@@ -391,7 +391,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     async def remove_restriction(
         restriction_id: str, group_id: str | None = None
     ) -> str:
-        """Удалить товарный ограничитель. ИЗМЕНЯЕТ ДАННЫЕ, платно, необратимо."""
+        """Удалить товарный ограничитель. ИЗМЕНЯЕТ ДАННЫЕ, по тарифу, необратимо."""
         restriction_id = str(restriction_id).strip()
         if not restriction_id:
             return _json({"error": "bad_request", "message": "Нужен restriction_id."})

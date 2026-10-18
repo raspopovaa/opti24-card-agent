@@ -641,7 +641,7 @@ def test_get_report_status_and_access_rules(tmp_path: Path) -> None:
     rules = json.loads(asyncio.run(tools["get_access_rules"].call({"card_id": "c1"})))
     assert rules["region_limits"][0]["access"] == "deny"
     assert rules["restrictions"][0]["product"] == "Топливо"
-    assert budget.spent == 2  # регионы и ограничители платные, лимиты бесплатны
+    assert budget.spent == 2  # регионы и ограничители тарифицируемые, лимиты бесплатны
 
 
 def test_diagnose_fueling_returns_checks_and_causes(tmp_path: Path) -> None:

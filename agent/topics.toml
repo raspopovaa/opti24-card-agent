@@ -303,7 +303,7 @@ answer_fields = [
   "get_restrictions:data.result.productTypeName",
   "get_restrictions:data.result.restriction_type",
 ]
-notes = "Карту, группу или весь договор. Региональные лимиты и ограничители — 2 платных запроса."
+notes = "Карту, группу или весь договор. Региональные лимиты и ограничители — 2 тарифицируемых запроса."
 
 [[topic]]
 id = "refusal"
@@ -406,7 +406,7 @@ examples = ["Покажи платежи за сентябрь 2026", "Когд�
 keywords = ["платеж!", "оплат", "поступлен", "закидывали", "пополняли"]
 tools = ["get_finance"]
 answer_fields = ["get_payments:data.result.date", "get_payments:data.result.amount", "get_payments:data.result.payment_name"]
-notes = "Платежи — платный запрос; последний платёж есть и в сводке договора."
+notes = "Платежи — тарифицируемый запрос; последний платёж есть и в сводке договора."
   [[topic.params]]
   kind = "period"
   required = true
@@ -442,7 +442,7 @@ examples = ["Какие отчёты уже заказаны?", "Закажи о
 keywords = ["отчет!", "excel!", "xlsx!", "выгруз", "скача"]
 tools = ["get_report_status", "order_fuel_report", "download_fuel_report"]
 answer_fields = ["get_report_job_list_v1:data.job_id", "get_report_job_list_v1:data.report_name", "get_report_job_list_v1:data.date"]
-notes = "Заказ платный и асинхронный, на DEMO недоступен; файл сохраняется в reports/, в чат не вставляется."
+notes = "Заказ тарифицируемый и асинхронный, на DEMO недоступен; файл сохраняется в reports/, в чат не вставляется."
 
 [[topic]]
 id = "api_quota"

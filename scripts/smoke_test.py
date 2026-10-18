@@ -2,7 +2,7 @@
 
 Моки в tests/ проверяют логику, но форму ответов сервера они только предполагают.
 Этот скрипт вызывает те же инструменты на DEMO или на рабочем договоре и сообщает,
-какие из них отработали, сколько платных запросов потрачено и где форма ответа
+какие из них отработали, сколько тарифицируемых запросов потрачено и где форма ответа
 не совпала с ожиданиями.
 
     # DEMO: бесплатно
@@ -55,14 +55,14 @@ def short(text: str, limit: int = 160) -> str:
 
 async def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--production", action="store_true", help="рабочий договор (платно)")
+    parser.add_argument("--production", action="store_true", help="рабочий договор (тарифицируется)")
     parser.add_argument("--contract-id", help="ID договора (иначе из .env или выбор из списка)")
-    parser.add_argument("--budget", type=int, default=8, help="предел платных запросов")
+    parser.add_argument("--budget", type=int, default=8, help="предел тарифицируемых запросов")
     args = parser.parse_args()
 
     env_file = PROD_ENV if args.production else DEMO_ENV
     if args.production:
-        answer = input(f"Рабочий API: платные запросы, до {args.budget} шт. Продолжить? [да/нет]: ")
+        answer = input(f"Рабочий API: тарифицируемые запросы, до {args.budget} шт. Продолжить? [да/нет]: ")
         if answer.strip().lower() not in {"да", "y", "yes"}:
             return 1
     print(f"Окружение: {'РАБОЧЕЕ' if args.production else 'DEMO'}, файл {env_file}")

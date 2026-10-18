@@ -63,7 +63,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
 
     @beta_async_tool
     async def get_contract_summary() -> str:
-        """Баланс договора, расход месяца и карты. Платный запрос API (1 шт.).
+        """Баланс договора, расход месяца и карты. Тарифный запрос API (1 шт.).
 
         «Доступно» — это balanceData.available_amount; лимитные поля договора
         показываются отдельно и могут быть null. Не путай их с остатком денег.
@@ -109,7 +109,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     ) -> str:
         """Платежи, счета или закрывающие документы.
 
-        kind=payments — платный запрос; kind=invoices и kind=documents — бесплатные.
+        kind=payments — тарифный запрос; kind=invoices и kind=documents — бесплатные.
         Для documents нужен период до месяца.
         """
         normalized = {

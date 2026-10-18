@@ -28,13 +28,12 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     ) -> str:
         """Список топливных карт договора: ID, номер, статус, группа, комментарий. Бесплатно.
 
-        Нужен, чтобы найти ID карты для get_limits, spending_report и block_cards.
+        Нужен, чтобы найти ID карты для других инструментов.
         Показывает не больше 25 карт; если total больше shown, сузь фильтр.
 
         Args:
-            status: Системный код статуса из get_dictionary("CardStatus"):
-                "Active", "Locked(Client)", "Locked(Manager)", "Inactive" и т. п.
-                Русские названия ("Активна") API не принимает.
+            status: Код статуса: Active, Locked(Client), Locked(Manager), Inactive
+                (все — lookup_dictionary CardStatus); русские названия API не принимает.
             group_id: Показать только карты этой группы (ID из list_card_groups).
             query: Поиск по номеру карты или комментарию.
         """
@@ -75,8 +74,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     ) -> str:
         """Карта, водитель, группа и лимиты. Платно: 1–2 запроса API.
 
-        Вызывай после list_cards, когда нужно понять, кто закреплён за картой и
-        какие у неё лимиты. include_drivers=False экономит один платный запрос.
+        Вызывай после list_cards. include_drivers=False экономит платный запрос.
         """
         try:
             budget.spend()

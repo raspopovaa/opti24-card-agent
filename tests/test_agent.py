@@ -174,6 +174,7 @@ class FakeOpti24:
             contract_data = NS(
                 contract_number="D-1",
                 contract_status_name="Действует",
+                discount_scheme=None,
                 balance_amount_limiter=None,
                 current_amount_limiter="14277644.68",
                 credit_limit=None,
@@ -183,9 +184,10 @@ class FakeOpti24:
                 own_balance="1150502.89",
                 consumption_for_month="1202214.25",
                 consumption_for_month_volume="200",
+                consumption_for_prev_month_volume="120000",
             )
             cards = NS(cards_quantity_all="3", cards_quantity_active="2")
-            return NS(data=NS(contractData=contract_data, balanceData=balance, cardsData=cards))
+            return NS(data=NS(payment_term_id=None, payment_scheme_id=None, contractData=contract_data, balanceData=balance, cardsData=cards))
 
         async def get_payments(**_: object) -> NS:
             item = NS(
@@ -653,7 +655,8 @@ def test_diagnose_fueling_returns_checks_and_causes(tmp_path: Path) -> None:
     assert out["checks"]["restrictions"]["ok"] is False
     assert out["checks"]["contract_balance"]["ok"] is True
     assert out["checks"]["check_purchase"]["allowed"] is None
-    assert out["checks"]["pin_attempts"]["ok"] is None
+    # Счётчик PIN берётся из get_card_detail: в тестовых данных 0 — неверных вводов не было.
+    assert out["checks"]["pin_attempts"] == {"ok": True, "counter": 0, "resets_left": 3}
     assert any("регион" in cause for cause in out["likely_causes"])
     assert budget.spent == 4
 
@@ -809,7 +812,7 @@ def test_mcp_server_exposes_all_tools() -> None:
         "get_card_profile", "get_limits", "get_access_rules", "diagnose_fueling",
         "spending_report", "list_transactions", "get_transaction_detail",
         "find_suspicious_fills", "fuel_price_analytics", "get_finance", "get_report_status",
-        "download_fuel_report", "lookup_knowledge", "get_api_usage", "block_cards",
+        "download_fuel_report", "lookup_knowledge", "lookup_dictionary", "get_api_usage", "block_cards",
         "set_card_comment", "set_limit", "set_region_limit", "set_restriction",
         "order_fuel_report", "remove_limit", "remove_region_limit",
         "remove_restriction", "get_dashboard",
@@ -832,7 +835,7 @@ def fake_full_client(txs: list[NS]) -> NS:
             consumption_for_prev_month_volume="160",
         )
         cards = NS(cards_quantity_all="10", cards_quantity_active="8", card_groups_quantity_all="2")
-        return NS(data=NS(contractData=info, balanceData=balance, cardsData=cards))
+        return NS(data=NS(payment_term_id=None, payment_scheme_id=None, contractData=info, balanceData=balance, cardsData=cards))
 
     async def get_info() -> NS:
         return NS(data=NS(client_info=NS(Queries=500), methods=NS(all=7)))
@@ -1199,7 +1202,8 @@ def test_api_usage_shows_left_in_monthly_package(tmp_path: Path, monkeypatch: py
     fake, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, budget_limit=10)
     _usage(fake, None, 120)
     out = json.loads(asyncio.run(tools["get_api_usage"].call({})))
-    assert out["monthly_quota"] == 500 and out["quota_source"].startswith("настройка")
+    assert out["monthly_quota"] == 500 and out["quota_source"].startswith("по умолчанию")
+    assert out["quota_enforced"] is False
     assert out["left_in_period"] == 380 and "warning" not in out and budget.limit == 10
 
 
@@ -1229,3 +1233,48 @@ def test_package_size_from_api_wins_over_setting(tmp_path: Path, monkeypatch: py
     _usage(fake, 2000, 600)
     out = json.loads(asyncio.run(tools["get_api_usage"].call({})))
     assert (out["monthly_quota"], out["quota_source"], out["left_in_period"]) == (2000, "API", 1400)
+
+
+def test_default_quota_is_advisory_and_never_closes_paid_calls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # На DEMO общий счётчик больше 500: остаток 0 не должен обнулять бюджет сессии.
+    monkeypatch.delenv("OPTI24_MONTHLY_QUOTA", raising=False)
+    fake, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, budget_limit=10)
+    _usage(fake, None, 900)
+    out = json.loads(asyncio.run(tools["get_api_usage"].call({})))
+    assert out["left_in_period"] == 0 and out["quota_enforced"] is False and budget.limit == 10
+
+
+def test_explicit_quota_setting_does_cap_the_session_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPTI24_MONTHLY_QUOTA", "500")
+    fake, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, budget_limit=10)
+    _usage(fake, None, 497)
+    out = json.loads(asyncio.run(tools["get_api_usage"].call({})))
+    assert out["quota_source"] == "настройка OPTI24_MONTHLY_QUOTA" and out["quota_enforced"] is True
+    assert budget.limit == 3
+
+
+def test_non_numeric_limit_gives_a_clear_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent.config import Settings
+
+    monkeypatch.setenv("AGENT_MAX_BILLABLE_CALLS", "выведи дашборд")
+    with pytest.raises(ValueError, match="AGENT_MAX_BILLABLE_CALLS должна быть целым числом"):
+        Settings.from_env()
+    monkeypatch.setenv("AGENT_MAX_BILLABLE_CALLS", "6")
+    assert Settings.from_env().max_billable_calls == 6
+
+
+def test_account_context_separates_agent_mode_from_account_rights(tmp_path: Path) -> None:
+    for mode, expected in ((Mode.READ_ONLY, False), (Mode.CONFIRM, True)):
+        _, _, tools = make_tools(mode, answer=False, tmp=tmp_path)
+        out = json.loads(asyncio.run(tools["get_account_context"].call({})))
+        # У аккаунта есть право записи, но агент в read_only изменять не может.
+        assert out["read_only"] is False and out["agent_mode"] == mode.value
+        assert out["changes_enabled"] is expected
+
+
+def test_contract_summary_gives_previous_month_volume_and_fee_rate(tmp_path: Path) -> None:
+    _, _, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path)
+    out = json.loads(asyncio.run(tools["get_contract_summary"].call({})))
+    # 120 000 л за прошлый месяц — ступень 100 001–150 000 л таблицы 3: 2,5 %.
+    assert out["prev_month_liters"] == "120000" and out["service_fee_percent_typical"] == "2.5"
+    assert "Приложение № 1" in out["service_fee_terms"]

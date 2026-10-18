@@ -13,12 +13,14 @@ from typing import Any
 
 from apisdkopti24 import APIClient
 
+from .classifier import classify, hint, log_question
 from .config import Settings
 from .core_types import Usage
 from .prompt import SYSTEM_PROMPT
 from .providers import get_provider
 from .safety import ApprovalGate, AskHuman, BillingBudget
 from .tools import build_tools
+from .tools.router import ToolRouter
 
 
 def make_llm(settings: Settings) -> Any:
@@ -67,6 +69,7 @@ class FuelCardAgent:
     budget: BillingBudget = field(init=False)
     gate: ApprovalGate = field(init=False)
     tools: list[Any] = field(init=False)
+    router: ToolRouter | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self.budget = BillingBudget(limit=self.settings.max_billable_calls)
@@ -74,6 +77,10 @@ class FuelCardAgent:
             mode=self.settings.mode, ask=self.ask_human, audit_log=self.settings.audit_log
         )
         self.tools = build_tools(self.opti24, self.budget, self.gate)
+        # Двухуровневый выбор нужен там, где нет кеша промпта и модели слабее: у Claude полный набор
+        # из 27 схем дёшев (кеш) и проверен на evals, поэтому для него маршрутизатор не включается.
+        if get_provider(self.settings.provider).kind == "openai" and self.settings.tool_routing != "off":
+            self.router = ToolRouter(self.tools, self.settings.mode)
 
     async def ask(self, question: str) -> str:
         if self.llm is None:
@@ -81,19 +88,27 @@ class FuelCardAgent:
         # Дата идёт в сообщении пользователя, а не в системной инструкции:
         # так инструкция остаётся неизменной и целиком берётся из кеша.
         user_message = {"role": "user", "content": f"[Сегодня {date.today():%Y-%m-%d}] {question}"}
-        messages = [*self.history, user_message]
+        # Тема вопроса и подсказка по ней идут модели только с текущим вопросом: в истории они бы
+        # устарела и сбивала следующие вопросы.
+        found = classify(question)
+        log_question(question, found)
+        note = hint(found)
+        current = {**user_message, "content": f"{user_message['content']}\n{note}"} if note else user_message
+        messages = [*self.history, current]
 
         if get_provider(self.settings.provider).kind == "anthropic":
             final_text = await self._ask_claude(messages)
         else:
             from .llm_openai import run_openai_loop
 
+            if self.router is not None:
+                self.router.preload(question)
             final_text, called = await run_openai_loop(
                 self.llm,
                 self.settings.model,
                 SYSTEM_PROMPT,
                 messages,
-                self.tools,
+                self.router.visible if self.router is not None else self.tools,
                 self.settings.max_iterations,
                 self.usage,
             )

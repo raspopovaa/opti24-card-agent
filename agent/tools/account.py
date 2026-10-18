@@ -8,8 +8,10 @@ from anthropic import beta_async_tool
 from apisdkopti24 import APIError
 from apisdkopti24.errors import ContractSelectionError, RequestValidationError
 
+from ..config import Mode
 from ..knowledge import search as search_knowledge
 from ..money import rub, to_decimal
+from ..pricing import TERMS_EDITION, service_fee_for_volume
 from ..safety import BudgetExceededError
 from .common import _check_dates, _doc_date, _error, _iso, _json, _rub_optional
 from .context import ToolContext
@@ -21,13 +23,15 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     budget = ctx.budget
     knowledge = ctx.knowledge
     quota_payload = ctx.quota_payload
+    gate = ctx.gate
+    dictionary_label = ctx.dictionary_label
 
     @beta_async_tool
     async def get_account_context() -> str:
-        """Договор, роль, режим только чтения, пакет и период статистики. Бесплатно.
+        """Договор, роль, разрешены ли изменения, пакет и период статистики. Бесплатно.
 
         Вызывай в начале разговора, чтобы понять, какой договор выбран и можно ли
-        что-то менять. Если договоров несколько, покажи их номера пользователю.
+        что-то менять (changes_enabled). Если договоров несколько, покажи их номера.
         """
         try:
             contract_id = getattr(client, "contract_id", None)
@@ -48,6 +52,10 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                 "org_name": data.org_name,
                 "role": data.role_name,
                 "read_only": data.read_only,
+                # Режим агента (AGENT_MODE) отдельно от прав аккаунта: изменения возможны, только если
+                # агент запущен в confirm и у аккаунта есть право записи.
+                "agent_mode": gate.mode.value,
+                "changes_enabled": gate.mode is Mode.CONFIRM and not data.read_only,
                 "period": {"from": _iso(info.from_), "to": _iso(info.to)},
                 **quota_payload(info),
             }
@@ -74,6 +82,18 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                 "own_funds": rub(to_decimal(balance.own_balance)),
                 "month_spent": rub(to_decimal(balance.consumption_for_month)),
                 "month_liters": balance.consumption_for_month_volume,
+                # Объём прошлого месяца задаёт ставку сервисного сбора: отдаём его и ставку по
+                # типовой редакции, чтобы цену со сбором считать без загрузки операций прошлого месяца.
+                "prev_month_liters": balance.consumption_for_prev_month_volume,
+                "service_fee_percent_typical": str(service_fee_for_volume(to_decimal(balance.consumption_for_prev_month_volume)))
+                if balance.consumption_for_prev_month_volume is not None
+                else None,
+                "service_fee_terms": TERMS_EDITION,
+                "discount_scheme": info.discount_scheme,
+                # Коды договора расшифровываются бесплатными справочниками API.
+                "discount_scheme_name": await dictionary_label("DiscountScheme", info.discount_scheme),
+                "payment_term": await dictionary_label("PaymentTerm", data.payment_term_id),
+                "payment_scheme": await dictionary_label("PaymentScheme", data.payment_scheme_id),
                 "cards_total": cards.cards_quantity_all,
                 "cards_active": cards.cards_quantity_active,
                 # Необязательные лимитные поля: null, а не «0 ₽».
@@ -90,7 +110,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         """Платежи, счета или закрывающие документы.
 
         kind=payments — платный запрос; kind=invoices и kind=documents — бесплатные.
-        Для documents нужны date_from и date_to. Период не больше месяца.
+        Для documents нужен период до месяца.
         """
         normalized = {
             "payment": "payments",

@@ -8,3 +8,5 @@ agent-audit.jsonl
 !.env.example
 .coverage
 knowledge_store/
+# Журнал вопросов для пополнения матрицы тем: может содержать имена и номера карт.
+*topic-log*.jsonl

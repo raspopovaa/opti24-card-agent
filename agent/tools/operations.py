@@ -36,8 +36,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         """Сводка расходов за период: сумма, литры и цена литра по топливу, топ-5 карт.
 
         Платный запрос API: 1 запрос на каждую страницу из 100 операций.
-        Период не больше месяца. Повторный вызов за тот же период (и
-        find_suspicious_fills за него) бесплатен: операции уже загружены.
+        Период не больше месяца; операции за загруженный период — из кеша.
 
         Args:
             date_from: Начало периода, ГГГГ-ММ-ДД.
@@ -119,8 +118,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     ) -> str:
         """Конкретные операции за период: дата, карта, АЗС, продукт, литры, цена, сумма.
 
-        Платный запрос API, но за период, уже загруженный spending_report или
-        find_suspicious_fills, страницы повторно не оплачиваются.
+        Платный запрос API; операции за загруженный период — из кеша.
         """
         if problem := _check_dates(date_from, date_to):
             return _json({"error": "bad_dates", "message": problem})
@@ -207,8 +205,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         """Подозрительные заправки за период: дорогие, ночные, крупные, частые.
 
         Платный запрос API: 1 запрос на каждую страницу из 100 операций; за
-        период, уже загруженный spending_report, бесплатно. Правила проверки
-        заданы в коде и приходят в поле rules: пересказывай их, а не придумывай.
+        период, уже загруженный spending_report, бесплатно.
 
         Args:
             date_from: Начало периода, ГГГГ-ММ-ДД.
@@ -233,7 +230,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         product: str | None = None,
         liters: float | None = None,
     ) -> str:
-        """Почему отказ на АЗС: статус карты, check_purchase, лимиты, баланс, регионы и ограничители, PIN.
+        """Почему карту не приняли на АЗС: статус, check_purchase, лимиты, баланс, регионы, PIN.
 
         Укажи card_id или query (номер/комментарий). Код и текст причины — из чека
         отказа. poi_id — ID АЗС или её номер/адрес из чека; с product и liters нужен для
@@ -383,6 +380,11 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         if deny_restrictions:
             causes.append("есть запрещающий товарный ограничитель")
             steps.append("Проверить продукт и при необходимости изменить ограничитель.")
+        # get_card_detail отдаёт счётчик попыток ввода PIN: ненулевой — повод проверить PIN.
+        pin_counter = getattr(card, "pin_counter", None)
+        if pin_counter:
+            causes.append(f"по карте были неверные вводы PIN (счётчик {pin_counter}): после нескольких ошибок карта блокируется")
+            steps.append("Уточнить у водителя PIN; сбросить счётчик можно в личном кабинете или через поддержку.")
         if text and re.search(r"pin|пин", text, re.IGNORECASE):
             causes.append("в чеке отказа упомянут PIN: возможно, превышено число неверных вводов")
             steps.append("Сбросить счётчик неверных вводов PIN в личном кабинете или через поддержку оператора.")
@@ -414,8 +416,9 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                 "allow": allow_restrictions,
             },
             "pin_attempts": {
-                "ok": None,
-                "note": "API не показывает счётчик неверных вводов PIN; спроси водителя.",
+                "ok": None if pin_counter is None else pin_counter == 0,
+                "counter": pin_counter,
+                "resets_left": getattr(card, "pin_reset", None),
             },
         }
         if decoded:

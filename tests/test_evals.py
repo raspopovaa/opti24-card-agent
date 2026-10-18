@@ -85,3 +85,45 @@ def test_retrieval_quality_stays_above_thresholds() -> None:
     result = evaluate()
     assert result["hit_at_n"] >= MIN_HIT_AT_3, result["misses"]
     assert result["unknown_ok"] >= MIN_UNKNOWN, result["false_answers"]
+
+
+def test_claude_code_stream_gives_agent_tool_calls_only() -> None:
+    from evals.run_evals_claude import TOOL_PREFIX, build_command, parse_stream
+
+    lines = [
+        json.dumps({"type": "system", "subtype": "init", "model": "claude-haiku-5-5"}),
+        "не json",
+        json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Смотрю"},
+            {"type": "tool_use", "name": f"{TOOL_PREFIX}spending_report", "input": {"date_from": "2026-09-01"}},
+            {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}},  # не инструмент агента
+        ]}}),
+        json.dumps({"type": "result", "is_error": False, "result": "Готово"}),
+    ]
+    calls, result, model = parse_stream(lines)
+    assert calls == [("spending_report", {"date_from": "2026-09-01"})]
+    assert result and result["result"] == "Готово" and model == "claude-haiku-5-5"
+
+    command = build_command("Покажи расходы", "haiku", Path("mcp.json"))
+    assert command[command.index("--tools") + 1] == ""  # встроенные инструменты Claude Code отключены
+    assert "--strict-mcp-config" in command and command[command.index("--model") + 1] == "haiku"
+
+
+def test_number_passed_as_string_is_accepted_but_wrong_number_is_not() -> None:
+    case = {"must_call": ["diagnose_fueling"], "must_not_call": [], "expect_args": {"diagnose_fueling": {"liters": 50}}}
+    assert check_case(case, [("diagnose_fueling", {"liters": "50"})], TODAY) == []
+    assert check_case(case, [("diagnose_fueling", {"liters": "50,0"})], TODAY) == []
+    assert check_case(case, [("diagnose_fueling", {"liters": "60"})], TODAY) == [
+        "diagnose_fueling.liters = '60', ожидалось 50"
+    ]
+    # bool не число, строка не число — не совпадают
+    flag = {"must_call": [], "must_not_call": [], "expect_args": {"t": {"on": True}}}
+    assert check_case(flag, [("t", {"on": "1"})], TODAY) == ["t.on = '1', ожидалось True"]
+
+
+def test_repeated_tool_calls_are_reported_as_a_loop() -> None:
+    case = {"must_call": ["diagnose_fueling"], "must_not_call": []}
+    two = [("diagnose_fueling", {"card_id": "c1"})] * 2
+    assert check_case(case, two, TODAY) == []
+    problems = check_case(case, [*two, ("diagnose_fueling", {"query": "x"})], TODAY)
+    assert problems == ["diagnose_fueling вызван 3 раз (допустимо 2): похоже на цикл"]

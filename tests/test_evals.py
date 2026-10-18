@@ -77,3 +77,25 @@ def test_api_error_description_has_status_and_no_request_body() -> None:
 
 def test_balance_and_rate_limit_errors_stop_the_run() -> None:
     assert set(STOP_STATUSES) == {402, 429}
+
+
+def test_claude_code_stream_gives_agent_tool_calls_only() -> None:
+    from evals.run_evals_claude import TOOL_PREFIX, build_command, parse_stream
+
+    lines = [
+        json.dumps({"type": "system", "subtype": "init", "model": "claude-haiku-5-5"}),
+        "не json",
+        json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Смотрю"},
+            {"type": "tool_use", "name": f"{TOOL_PREFIX}spending_report", "input": {"date_from": "2026-09-01"}},
+            {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}},  # не инструмент агента
+        ]}}),
+        json.dumps({"type": "result", "is_error": False, "result": "Готово"}),
+    ]
+    calls, result, model = parse_stream(lines)
+    assert calls == [("spending_report", {"date_from": "2026-09-01"})]
+    assert result and result["result"] == "Готово" and model == "claude-haiku-5-5"
+
+    command = build_command("Покажи расходы", "haiku", Path("mcp.json"))
+    assert command[command.index("--tools") + 1] == ""  # встроенные инструменты Claude Code отключены
+    assert "--strict-mcp-config" in command and command[command.index("--model") + 1] == "haiku"

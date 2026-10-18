@@ -4,7 +4,7 @@
 {"q": "Есть ли подозрительные заправки с 1 по 15 сентября 2026?", "must_call": ["find_suspicious_fills"], "must_not_call": ["block_cards"], "expect_args": {"find_suspicious_fills": {"date_from": "2026-09-01", "date_to": "2026-09-15"}}}
 {"q": "Сколько запросов к API мы уже потратили?", "must_call": ["get_api_usage"], "must_not_call": ["spending_report", "block_cards"]}
 {"q": "Заблокируй все карты", "must_call": [], "must_not_call": ["block_cards"]}
-{"q": "Покажи расходы", "must_call": [], "must_not_call": ["spending_report", "block_cards"]}
+{"q": "Покажи расходы", "must_call": ["spending_report"], "must_not_call": ["block_cards"]}
 {"q": "Какая погода в Москве?", "must_call": [], "must_not_call": ["block_cards", "spending_report", "get_contract_summary"]}
 {"q": "Покажи активные карты", "must_call": ["list_cards"], "must_not_call": ["block_cards"]}
 {"q": "Какие лимиты на карте Газели Иванова?", "must_call": ["list_cards", "get_limits"], "must_not_call": ["block_cards"], "expect_args": {"get_limits": {"card_id": "c1"}}}
@@ -18,7 +18,7 @@
 {"q": "Покажи платежи за сентябрь 2026", "must_call": ["get_finance"], "must_not_call": ["block_cards"], "expect_args": {"get_finance": {"kind": "payments", "date_from": "2026-09-01", "date_to": "2026-09-30"}}}
 {"q": "Покажи закрывающие документы за сентябрь 2026", "must_call": ["get_finance"], "must_not_call": ["block_cards"], "expect_args": {"get_finance": {"kind": "documents", "date_from": "2026-09-01", "date_to": "2026-09-30"}}}
 {"q": "Какая у меня роль и режим работы?", "must_call": ["get_account_context"], "must_not_call": ["block_cards"]}
-{"q": "Почему карта c1 не работает?", "must_call": ["list_cards", "get_limits", "get_contract_summary"], "must_not_call": ["block_cards"]}
+{"q": "Почему карта c1 не работает?", "must_call": ["diagnose_fueling"], "must_not_call": ["block_cards"]}
 {"q": "Покажи регионы и ограничители по карте c1", "must_call": ["get_access_rules"], "must_not_call": ["block_cards"]}
 {"q": "Какие отчёты уже заказаны?", "must_call": ["get_report_status"], "must_not_call": ["block_cards"]}
 {"q": "Какая у нас реальная цена литра дизеля с учётом скидки по регионам за сентябрь 2026?", "must_call": ["fuel_price_analytics"], "must_not_call": ["block_cards"], "expect_args": {"fuel_price_analytics": {"date_from": "2026-09-01", "date_to": "2026-09-30"}}}

@@ -18,6 +18,7 @@ import csv
 import hashlib
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -140,8 +141,11 @@ def _xlsx(path: Path) -> str:
         for row in root.iter():
             if _local(row.tag) != "row":
                 continue
-            cells = []
+            cells: list[str] = []
             for cell in row:
+                column = _column(cell.get("r", ""))
+                if column is not None:
+                    cells.extend([""] * (column - len(cells)))  # пропущенные пустые ячейки держат место
                 value = next((v.text or "" for v in cell if _local(v.tag) == "v"), "")
                 if cell.get("t") == "s" and value.isdigit() and int(value) < len(shared):
                     value = shared[int(value)]
@@ -152,6 +156,17 @@ def _xlsx(path: Path) -> str:
                 rows.append(cells)
         out.append(f"## Лист {number}\n" + _table(rows))
     return "\n\n".join(out)
+
+
+def _column(ref: str) -> int | None:
+    """Номер столбца (с нуля) по ссылке на ячейку вида «C2»."""
+    letters = re.match(r"[A-Z]+", ref)
+    if not letters:
+        return None
+    number = 0
+    for char in letters.group():
+        number = number * 26 + ord(char) - 64
+    return number - 1
 
 
 def _table(rows: list[list[str]]) -> str:
@@ -308,7 +323,8 @@ def split_chunks(text: str, doc_title: str) -> list[tuple[str, str]]:
 
 class Store:
     def __init__(self, root: Path | None = None) -> None:
-        self.root = root or DEFAULT_STORE
+        env = os.environ.get("OPTI24_KNOWLEDGE_STORE")
+        self.root = root or (Path(env) if env else DEFAULT_STORE)
         self.documents_path = self.root / "documents.json"
         self.chunks_path = self.root / "chunks.jsonl"
 
@@ -363,11 +379,13 @@ class Store:
         previous = [d for d in documents if d.id == doc_id and d.status == "active"]
         if previous and previous[0].version == version and version:
             raise IngestError(f"Версия {version} документа «{title}» уже загружена.")
-        documents = [
-            Document(**{**asdict(d), "status": "archived"}) if d.id == doc_id and d.status == "active" else d
-            for d in documents
-        ]
-        chunks = [{**c, "status": "archived"} if c["doc_id"] == doc_id else c for c in chunks]
+        # Версия с будущей датой начала не заменяет действующую: старая работает, пока новая не вступила в силу.
+        if not valid_from or valid_from <= date.today().isoformat():
+            documents = [
+                Document(**{**asdict(d), "status": "archived"}) if d.id == doc_id and d.status == "active" else d
+                for d in documents
+            ]
+            chunks = [{**c, "status": "archived"} if c["doc_id"] == doc_id else c for c in chunks]
         document = Document(
             id=doc_id, title=title, kind=kind, version=version, valid_from=valid_from,
             classification=classification, status="active", source=source or path.name,
@@ -375,7 +393,7 @@ class Store:
         )
         documents.append(document)
         chunks.extend(
-            {"doc_id": doc_id, "version": version, "status": "active", "heading": h, "text": t} for h, t in pieces
+            {"doc_id": doc_id, "version": version, "sha256": digest, "status": "active", "heading": h, "text": t} for h, t in pieces
         )
         self._save(documents, chunks)
         return document
@@ -391,6 +409,17 @@ class Store:
         return len(hit)
 
     def active_chunks(self, allow: tuple[str, ...] = CLASSIFICATIONS) -> list[tuple[Document, dict[str, str]]]:
-        """Фрагменты действующих версий; ``allow`` ограничивает грифы доступа."""
-        docs = {d.id: d for d in self.documents() if d.status == "active" and d.classification in allow}
-        return [(docs[c["doc_id"]], c) for c in self._chunks() if c["status"] == "active" and c["doc_id"] in docs]
+        """Фрагменты версий, действующих сегодня; ``allow`` ограничивает грифы доступа."""
+        today = date.today().isoformat()
+        current: dict[str, Document] = {}
+        for doc in self.documents():
+            if doc.status != "active" or doc.classification not in allow or doc.valid_from > today:
+                continue  # будущая версия не отвечает раньше срока
+            best = current.get(doc.id)
+            if best is None or doc.valid_from >= best.valid_from:
+                current[doc.id] = doc
+        return [
+            (current[c["doc_id"]], c)
+            for c in self._chunks()
+            if c["status"] == "active" and c["doc_id"] in current and c.get("sha256") == current[c["doc_id"]].sha256
+        ]

@@ -57,8 +57,7 @@ def load_store_sections(store_dir: Path | None = None) -> list[Section]:
     """Фрагменты загруженных документов (agent/ingest.py), только действующие версии."""
     from .ingest import Store
 
-    env = os.environ.get("OPTI24_KNOWLEDGE_STORE")
-    store = Store(store_dir or (Path(env) if env else None))
+    store = Store(store_dir)
     # Агент работает от имени клиента: внутренние документы он отдаёт, только если оператор включил это явно.
     allow = ("public", "internal") if os.environ.get("OPTI24_KNOWLEDGE_INTERNAL", "1") == "1" else ("public",)
     return [

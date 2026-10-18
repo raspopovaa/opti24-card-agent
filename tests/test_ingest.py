@@ -181,3 +181,32 @@ def test_cli_add_list_archive(store: Store, tmp_path: Path, capsys: pytest.Captu
     assert ingest_main([*base, "archive", doc_id]) == 0
     assert ingest_main([*base, "add", str(tmp_path / "nope.md"), "--title", "Х"]) == 1
     assert "Ошибка" in capsys.readouterr().err
+
+
+def test_cli_uses_store_from_environment(store: Store, tmp_path: Path) -> None:
+    file = tmp_path / "a.md"
+    file.write_text("## Раздел\nПорядок согласования отпуска водителей по графику.", encoding="utf-8")
+    assert ingest_main(["add", str(file), "--title", "Из окружения"]) == 0
+    assert search(load_store_sections(), "порядок согласования отпуска водителей")
+
+
+def test_sparse_xlsx_cells_keep_their_columns(tmp_path: Path) -> None:
+    shared = f'<sst xmlns="{S}"><si><t>Карта</t></si><si><t>Лимит</t></si><si><t>Комментарий</t></si><si><t>блок</t></si></sst>'
+    sheet = (
+        f'<worksheet xmlns="{S}"><sheetData>'
+        '<row><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c><c r="C1" t="s"><v>2</v></c></row>'
+        '<row><c r="A2"><v>42</v></c><c r="C2" t="s"><v>3</v></c></row>'
+        "</sheetData></worksheet>"
+    )
+    text = extract_text(make_zip(tmp_path / "s.xlsx", {"xl/sharedStrings.xml": shared, "xl/worksheets/sheet1.xml": sheet}))
+    assert "Карта: 42; Комментарий: блок" in text and "Лимит: блок" not in text
+
+
+def test_future_version_waits_for_its_date(store: Store, tmp_path: Path) -> None:
+    old, new = tmp_path / "old.md", tmp_path / "new.md"
+    old.write_text("## Тариф\nСервисный сбор составляет три процента.", encoding="utf-8")
+    new.write_text("## Тариф\nСервисный сбор составляет два процента.", encoding="utf-8")
+    store.add(old, title="Тарифы", version="v1", valid_from="2020-01-01")
+    store.add(new, title="Тарифы", version="v2", valid_from="2999-01-01")
+    assert [s.text for s in load_store_sections()] == ["Сервисный сбор составляет три процента."]
+    assert [d.status for d in store.documents()] == ["active", "active"]

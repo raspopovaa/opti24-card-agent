@@ -32,7 +32,7 @@ class Provider:
     # Переменная с ID каталога Yandex Cloud: он входит в имя модели
     # (gpt://<каталог>/<модель>) и передаётся в заголовке проекта.
     folder_env: str = ""
-    # Переменная с адресом API, если у провайдера нет общего адреса (корпоративный шлюз).
+    # Переменная с адресом API, если у провайдера нет общего адреса.
     base_url_env: str = ""
 
 
@@ -69,17 +69,14 @@ PROVIDERS: dict[str, Provider] = {
     "gigachat": Provider(
         "openai", "GigaChat-2-Max", "", "http://localhost:8090/v1", "GigaChat через локальный прокси gpt2giga"
     ),
-    # Корпоративный шлюз LiteLLM платформы N1 (с цензором): только модели компании.
-    # Адрес шлюза и имя модели у каждой компании свои, поэтому не зашиты.
-    "n1": Provider(
-        "openai", "", "N1_API_KEY", "", "Корпоративный шлюз LiteLLM платформы N1", base_url_env="N1_BASE_URL"
-    ),
     # Любой OpenAI-совместимый API: адрес и модель задаются AGENT_BASE_URL и AGENT_MODEL.
     "custom": Provider("openai", "", "AGENT_API_KEY", "", "Любой OpenAI-совместимый API"),
     # Локально
     "ollama": Provider(
         "openai", "qwen3:8b", "", "http://localhost:11434/v1", "Локальная модель через Ollama, бесплатно"
     ),
+    # vLLM: OpenAI-совместимый сервер на своём компьютере или в сети. Модель задаётся при запуске сервера.
+    "vllm": Provider("openai", "", "", "http://localhost:8000/v1", "Локальный сервер vLLM, бесплатно"),
 }
 
 

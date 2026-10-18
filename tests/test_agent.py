@@ -905,7 +905,7 @@ def test_providers_and_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_us_chinese_and_russian_providers_are_available() -> None:
     from agent.providers import PROVIDERS
 
-    assert {"claude", "openai", "deepseek", "qwen", "yandex", "gigachat", "n1", "custom"} <= set(PROVIDERS)
+    assert {"claude", "openai", "deepseek", "qwen", "yandex", "gigachat", "vllm", "custom"} <= set(PROVIDERS)
 
 
 def test_yandex_model_uri_and_project_come_from_folder(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -933,21 +933,19 @@ def test_yandex_without_folder_fails_before_any_request(monkeypatch: pytest.Monk
         make_llm(Settings.from_env())
 
 
-def test_n1_gateway_uses_its_own_url_key_and_model(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_vllm_runs_locally_without_key_and_needs_a_model(monkeypatch: pytest.MonkeyPatch) -> None:
     from agent.config import Settings
     from agent.core import make_llm
 
-    monkeypatch.setenv("AGENT_PROVIDER", "n1")
-    monkeypatch.setenv("N1_API_KEY", "k")
-    for name in ("N1_BASE_URL", "AGENT_BASE_URL", "AGENT_MODEL"):
+    monkeypatch.setenv("AGENT_PROVIDER", "vllm")
+    for name in ("AGENT_MODEL", "AGENT_BASE_URL", "AGENT_API_KEY"):
         monkeypatch.delenv(name, raising=False)
-    with pytest.raises(RuntimeError, match="N1_BASE_URL"):
+    with pytest.raises(RuntimeError, match="AGENT_MODEL"):
         make_llm(Settings.from_env())
-    monkeypatch.setenv("N1_BASE_URL", "https://llm-gateway.example.ru/v1")
-    monkeypatch.setenv("AGENT_MODEL", "corp-model")
+    monkeypatch.setenv("AGENT_MODEL", "Qwen/Qwen2.5-7B-Instruct")
     s = Settings.from_env()
-    assert (s.base_url, s.model, s.api_key) == ("https://llm-gateway.example.ru/v1", "corp-model", "k")
-    assert str(make_llm(s).base_url).startswith("https://llm-gateway.example.ru/v1")
+    assert (s.base_url, s.model, s.api_key) == ("http://localhost:8000/v1", "Qwen/Qwen2.5-7B-Instruct", "ollama")
+    assert str(make_llm(s).base_url).startswith("http://localhost:8000/v1")
 
 
 def test_custom_provider_needs_base_url_and_model(monkeypatch: pytest.MonkeyPatch) -> None:

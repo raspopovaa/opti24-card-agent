@@ -19,9 +19,10 @@
 python -m agent.dashboard    # только дашборд договора, без модели и без ключей ИИ
 python -m agent              # дашборд + диалог в терминале
 python scripts/smoke_test.py # проверка на настоящем API (DEMO), без модели
-pytest                       # 309 тестов без сети и без ключей
+pytest                       # 327 тестов без сети и без ключей
 ruff check agent scripts evals tests && mypy agent  # проверки качества кода, их же запускает CI
 python scripts/estimate_cost.py
+python evals/run_retrieval.py   # качество поиска по базе знаний: hit@3 и «ответа нет», без модели
 python evals/run_evals.py --runs 3  # оценка агента: инструменты и их аргументы (нужен ключ модели)
 python evals/run_evals_claude.py --model claude-haiku-5-5  # то же без API-ключа: через Claude Code по подписке
 ```

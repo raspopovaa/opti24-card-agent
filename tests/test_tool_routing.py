@@ -170,3 +170,42 @@ def test_invalid_routing_value_gives_a_clear_error(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("AGENT_TOOL_ROUTING", "maybe")
     with pytest.raises(ValueError, match="AGENT_TOOL_ROUTING"):
         Settings.from_env()
+
+
+def test_unknown_argument_names_are_refused_before_the_tool_runs(tmp_path: Path) -> None:
+    from agent.llm_openai import _run_tool
+
+    _, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, budget_limit=5)
+    by_name = {t.name: t for t in tools.values()}
+    raw = asyncio.run(_run_tool(by_name, "spending_report", '{"day_from": "2026-08-01", "day_to": "2026-08-31"}'))
+    out = json.loads(raw)
+    assert out["error"] == "unknown_argument" and "date_from" in out["message"]
+    assert budget.spent == 0  # ни одного платного запроса на угадывание
+
+
+def test_non_object_json_arguments_do_not_crash_the_loop(tmp_path: Path) -> None:
+    from agent.llm_openai import _run_tool
+
+    _, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, budget_limit=5)
+    by_name = {t.name: t for t in tools.values()}
+    for raw_args in ('["2026-08-01"]', "null", "не json"):
+        out = json.loads(asyncio.run(_run_tool(by_name, "spending_report", raw_args)))
+        assert out["error"] == "bad_arguments"
+    assert budget.spent == 0
+
+
+def test_synonyms_are_mapped_and_standard_names_work(tmp_path: Path) -> None:
+    from agent.llm_openai import _run_tool
+
+    _, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, budget_limit=5)
+    by_name = {t.name: t for t in tools.values()}
+    mapped = json.loads(asyncio.run(_run_tool(by_name, "spending_report", '{"period_from": "2026-08-01", "period_to": "2026-08-31"}')))
+    assert "error" not in mapped and budget.spent == 1  # однозначный синоним принят
+    plain = json.loads(asyncio.run(_run_tool(by_name, "spending_report", '{"date_from": "2026-08-01", "date_to": "2026-08-31"}')))
+    assert "error" not in plain and budget.spent == 1  # тот же период — операции из кеша, без оплаты  # теперь каждый вызов тратит запрос
+
+
+def test_refusal_questions_open_the_refusal_topic_without_a_card(tmp_path: Path) -> None:
+    for question in ("Почему карта c1 не работает?", "Водителю не дали заправиться по карте c1"):
+        found = classify(question)
+        assert found.primary is not None and found.primary.id == "refusal", question

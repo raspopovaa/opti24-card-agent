@@ -101,8 +101,8 @@ async def run_once(question: str, model: str, config_path: Path, workdir: Path) 
     return calls, None, used_model
 
 
-async def main(model: str, runs: int, limit: int | None, only: str | None = None) -> int:
-    cases = [json.loads(line) for line in (Path(__file__).with_name("cases.jsonl")).open()]
+async def main(model: str, runs: int, limit: int | None, only: str | None = None, cases_file: Path | None = None) -> int:
+    cases = [json.loads(line) for line in (cases_file or Path(__file__).with_name("cases.jsonl")).open()]
     cases = [c for c in cases if only.casefold() in c["q"].casefold()] if only else cases
     cases = cases[:limit] if limit else cases
     with tempfile.TemporaryDirectory(prefix="opti24-evals-") as tmp:
@@ -143,6 +143,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--runs", type=int, default=1, help="сколько раз прогнать каждый кейс")
     parser.add_argument("--limit", type=int, default=None, help="взять только первые N кейсов")
     parser.add_argument("--only", default=None, help="только кейсы, в вопросе которых есть этот текст")
+    parser.add_argument("--cases", type=Path, default=None, help="файл кейсов, например evals/paraphrases.jsonl")
     args = parser.parse_args()
     if args.runs < 1:
         parser.error("--runs должно быть не меньше 1")
@@ -151,4 +152,4 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     arguments = parse_args()
-    raise SystemExit(asyncio.run(main(arguments.model, arguments.runs, arguments.limit, arguments.only)))
+    raise SystemExit(asyncio.run(main(arguments.model, arguments.runs, arguments.limit, arguments.only, arguments.cases)))

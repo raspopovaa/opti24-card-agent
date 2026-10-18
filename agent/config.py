@@ -25,6 +25,13 @@ def _int_env(name: str, default: int) -> int:
         raise ValueError(f"Переменная {name} должна быть целым числом, а не {raw[:30]!r}") from None
 
 
+def _choice_env(name: str, default: str, allowed: set[str]) -> str:
+    value = os.environ.get(name, default).strip().lower()
+    if value not in allowed:
+        raise ValueError(f"Переменная {name} должна быть одним из {sorted(allowed)}, а не {value[:30]!r}")
+    return value
+
+
 def default_env_file(kind: str) -> str:
     """``.env.<kind>`` в папке проекта, если есть, иначе ``~/.opti24-<kind>.env``."""
     local = Path(__file__).resolve().parent.parent / f".env.{kind}"
@@ -51,6 +58,7 @@ class Settings:
     opti24_env_file: Path
     audit_log: Path
     project: str = ""  # ID каталога Yandex Cloud; для остальных провайдеров пусто
+    tool_routing: str = "auto"  # двухуровневый выбор инструментов у OpenAI-совместимых провайдеров: auto/on включают, off отключает
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -81,4 +89,5 @@ class Settings:
             ).expanduser(),
             audit_log=Path(os.environ.get("AGENT_AUDIT_LOG", "./agent-audit.jsonl")),
             project=project,
+            tool_routing=_choice_env("AGENT_TOOL_ROUTING", "auto", {"auto", "on", "off"}),
         )

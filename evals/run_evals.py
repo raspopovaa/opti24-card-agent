@@ -72,6 +72,7 @@ class FakeOpti24:
             contract_data = NS(
                 contract_number="DEMO-1",
                 contract_status_name="Действует",
+                discount_scheme=None,
                 balance_amount_limiter=None,
                 current_amount_limiter="50000.00",
                 credit_limit=None,
@@ -81,10 +82,13 @@ class FakeOpti24:
                 own_balance="1150502.89",
                 consumption_for_month="1202214.25",
                 consumption_for_month_volume="200",
+                consumption_for_prev_month_volume="15000",
             )
             cards_data = NS(cards_quantity_all="2", cards_quantity_active="2")
             return NS(
                 data=NS(
+                    payment_term_id=None,
+                    payment_scheme_id=None,
                     contractData=contract_data,
                     balanceData=balance,
                     cardsData=cards_data,
@@ -396,8 +400,8 @@ async def run_case(settings: Settings, case: dict[str, Any], runs: int, pause: f
     return len(failed_runs)
 
 
-async def main(runs: int, pause: float = 0) -> int:
-    cases = [json.loads(line) for line in Path(__file__).with_name("cases.jsonl").open()]
+async def main(runs: int, pause: float = 0, cases_file: Path | None = None) -> int:
+    cases = [json.loads(line) for line in (cases_file or Path(__file__).with_name("cases.jsonl")).open()]
     settings = _settings_or_exit()
     print(f"Провайдер: {settings.provider}, модель: {settings.model}, прогонов на кейс: {runs}")
     failed_cases = 0
@@ -411,6 +415,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Оценка выбора инструментов агента")
     parser.add_argument("--runs", type=int, default=1, help="сколько раз прогнать каждый кейс")
     parser.add_argument("--pause", type=float, default=0, help="пауза перед каждым прогоном, секунды")
+    parser.add_argument("--cases", type=Path, default=None, help="файл кейсов, например evals/paraphrases.jsonl")
     args = parser.parse_args()
     if args.runs < 1:
         parser.error("--runs должно быть не меньше 1")
@@ -419,4 +424,4 @@ def parse_args() -> argparse.Namespace:
 
 if __name__ == "__main__":
     arguments = parse_args()
-    raise SystemExit(asyncio.run(main(arguments.runs, arguments.pause)))
+    raise SystemExit(asyncio.run(main(arguments.runs, arguments.pause, arguments.cases)))

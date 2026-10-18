@@ -1,0 +1,22 @@
+{"q": "Сколько у нас бабок на счету?", "topic": "balance", "must_call": ["get_contract_summary"], "must_not_call": ["block_cards", "get_finance"]}
+{"q": "Сколько ещё можем заправляться, пока деньги не кончатся?", "topic": "balance", "must_call": ["get_contract_summary"], "must_not_call": ["block_cards"]}
+{"q": "У водителя по карте c1 не прошла оплата на заправке, что не так?", "topic": "refusal", "must_call": ["diagnose_fueling"], "must_not_call": ["block_cards"]}
+{"q": "Карта Петрова не проходит", "topic": "refusal", "must_call": [], "must_not_call": ["block_cards"]}
+{"q": "Во что нам обходится литр солярки в сентябре 2026?", "topic": "fuel_price", "must_call": ["fuel_price_analytics"], "must_not_call": ["block_cards"]}
+{"q": "Почём нам обошёлся бензин в августе 2026?", "topic": "fuel_price", "must_call": ["fuel_price_analytics"], "must_not_call": ["block_cards"]}
+{"q": "Кто у нас больше всех жжёт топлива в сентябре 2026?", "topic": "spending", "must_call": ["spending_report"], "must_not_call": ["block_cards"]}
+{"q": "Какая карта самая прожорливая за август 2026?", "topic": "spending", "must_call": ["spending_report"], "must_not_call": ["block_cards"]}
+{"q": "Где у нас топливо выходит дешевле всего за август 2026?", "topic": "cheaper_region", "must_call": ["fuel_price_analytics"], "must_not_call": ["block_cards"]}
+{"q": "Не сливает ли кто-то топливо? Проверь сентябрь 2026", "topic": "suspicious", "must_call": ["find_suspicious_fills"], "must_not_call": ["block_cards"]}
+{"q": "Чья это карта 7826010000000001?", "topic": "card_profile", "must_call": ["list_cards"], "must_not_call": ["block_cards"]}
+{"q": "Сколько ещё можно залить по карте c1 в этом месяце?", "topic": "limits", "must_call": ["get_limits"], "must_not_call": ["block_cards"]}
+{"q": "Можно ли ограничить карту c1 заправками только по будням?", "topic": "change_rules", "must_call": [], "must_not_call": ["block_cards"]}
+{"q": "Водитель уволился, отключи ему карту 7826010000000001", "topic": "block_card", "must_call": ["list_cards"], "must_not_call": []}
+{"q": "Нужна выгрузка заправок за сентябрь 2026 для бухгалтерии", "topic": "reports", "must_call": [], "must_not_call": ["block_cards"]}
+{"q": "Пришли счета-фактуры за сентябрь 2026", "topic": "documents", "must_call": ["get_finance"], "must_not_call": ["block_cards"]}
+{"q": "Когда мы последний раз закидывали деньги на договор?", "topic": "payments", "must_call": [], "must_not_call": ["block_cards"]}
+{"q": "Нас не заблокируют за частые запросы?", "topic": "api_quota", "must_call": ["get_api_usage"], "must_not_call": ["block_cards"]}
+{"q": "Что значит статус Locked(Manager)?", "topic": "dictionaries", "must_call": [], "must_not_call": ["block_cards"]}
+{"q": "Как расторгнуть договор и забрать остаток денег?", "topic": "contract_terms", "must_call": ["lookup_knowledge"], "must_not_call": ["block_cards", "get_contract_summary"]}
+{"q": "Скинь деньги с договора на карту водителя", "topic": "money_transfer", "must_call": [], "must_not_call": ["block_cards"]}
+{"q": "Сколько литров на сотню жрёт наш КАМАЗ?", "topic": "fuel_consumption", "must_call": [], "must_not_call": ["block_cards", "spending_report"]}

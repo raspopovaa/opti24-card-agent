@@ -19,7 +19,15 @@ from ..knowledge import load_sections
 from ..money import to_decimal
 from ..safety import ApprovalGate, BillingBudget
 from . import common
-from .common import DEFAULT_MONTHLY_QUOTA, MAX_LIST, QUOTA_WARNING_LEFT, _json, load_transactions
+from .common import (
+    DEFAULT_MONTHLY_QUOTA,
+    MAX_LIST,
+    QUOTA_WARNING_LEFT,
+    _json,
+    limit_left,
+    load_transactions,
+    percent,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +88,9 @@ def make_context(
             "quota_enforced": enforced,
             "calls_in_period": used,
             "left_in_period": left,
+            # Доли считает код: модель не делит сама.
+            "used_percent": percent(used, quota),
+            "left_percent": percent(left, quota),
         }
         if left <= QUOTA_WARNING_LEFT:
             payload["warning"] = (
@@ -207,6 +218,8 @@ def make_context(
                     "period": {"number": item.time.number, "type": item.time.type},
                     "amount": item.amount.model_dump() if item.amount else None,
                     "sum": item.sum.model_dump() if item.sum else None,
+                    "amount_left": limit_left(item.amount),
+                    "sum_left": limit_left(item.sum),
                     "term": item.term.model_dump() if item.term else None,
                     "transactions": item.transactions.model_dump() if item.transactions else None,
                 }

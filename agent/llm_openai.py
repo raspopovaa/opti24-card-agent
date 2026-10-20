@@ -72,7 +72,10 @@ def _hint(tool: Any) -> str:
     return f"Допустимые аргументы: {', '.join(expected)}." if expected else "У инструмента нет аргументов."
 
 
-async def _run_tool(tools: dict[str, Any], name: str, raw_args: str) -> str:
+async def _run_tool(
+    tools: dict[str, Any], name: str, raw_args: str, executed: list[tuple[str, dict[str, Any]]] | None = None
+) -> str:
+    """Выполняет вызов модели; в ``executed`` попадают только выполненные вызовы с исправленными аргументами."""
     tool = tools.get(name)
     if tool is None:
         return json.dumps(
@@ -97,6 +100,8 @@ async def _run_tool(tools: dict[str, Any], name: str, raw_args: str) -> str:
              + _hint(tool), "expected": sorted(_schema_names(tool))},
             ensure_ascii=False,
         )
+    if executed is not None:
+        executed.append((name, fixed))  # до await: порядок вызовов сохраняется и при gather
     try:
         result = await tool.call(fixed)
     except Exception as exc:  # noqa: BLE001 — ошибку инструмента отдаём модели, а не роняем цикл
@@ -145,11 +150,12 @@ async def run_openai_loop(
             return text, called
 
         conversation.append(message.model_dump(exclude_none=True))
+        # В called — только выполненные вызовы с аргументами, которые получил инструмент: отклонённая
+        # попытка (скрытый инструмент, неизвестный аргумент) ничего не сделала и не тратила запросы.
         results = await asyncio.gather(
-            *(_run_tool(by_name, c.function.name, c.function.arguments) for c in calls)
+            *(_run_tool(by_name, c.function.name, c.function.arguments, called) for c in calls)
         )
         for call, output in zip(calls, results, strict=True):
-            called.append((call.function.name, parse_tool_args(call.function.arguments)))
             conversation.append({"role": "tool", "tool_call_id": call.id, "content": output})
 
     return text or "Достигнут предел шагов агента: уточните вопрос.", called

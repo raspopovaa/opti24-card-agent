@@ -92,7 +92,7 @@ def test_hint_asks_for_missing_card_and_defaults_the_period() -> None:
     assert "тема «Отказ на АЗС»" in refusal and "сначала спроси" in refusal and "diagnose_fueling" in refusal
     assert "сначала спроси" not in hint(classify("Почему карта 7826010000000001 не работает?"))
     spending = hint(classify("Покажи расходы"))
-    assert "возьми текущий месяц" in spending and "сначала спроси" not in spending
+    assert "возьми прошлый месяц" in spending and "сначала спроси" not in spending
 
 
 def test_hint_for_unsupported_and_unknown_questions() -> None:
@@ -190,3 +190,14 @@ def test_prompt_contains_the_topic_catalog() -> None:
     assert "{catalog}" not in SYSTEM_PROMPT
     for topic in TOPICS:
         assert f"{topic.id} — {topic.title}" in SYSTEM_PROMPT
+
+
+def test_default_period_is_the_previous_month_with_dates_from_code() -> None:
+    from datetime import date
+
+    from agent.prompt import dated_question, previous_month
+
+    assert previous_month(date(2026, 1, 15)) == (date(2025, 12, 1), date(2025, 12, 31))
+    assert previous_month(date(2028, 3, 1)) == (date(2028, 2, 1), date(2028, 2, 29))
+    message = dated_question("Покажи расходы", date(2026, 10, 20))
+    assert message.startswith("[Сегодня 2026-10-20; период по умолчанию — прошлый месяц: 2026-09-01…2026-09-30]")

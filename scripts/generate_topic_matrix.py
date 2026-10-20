@@ -29,7 +29,7 @@ sys.path.insert(0, str(ROOT))
 import apisdkopti24.services as sdk_services  # noqa: E402
 from apisdkopti24.endpoints import OPERATION_METADATA_BY_NAME  # noqa: E402
 
-from agent.classifier import MIN_CONFIDENT_SCORE, PARAM_TITLES, Topic, load_matrix, load_sections  # noqa: E402
+from agent.classifier import ANSWER_TITLES, MIN_CONFIDENT_SCORE, PARAM_TITLES, Topic, load_matrix, load_sections  # noqa: E402
 from agent.tools.reference import DICTIONARIES  # noqa: E402
 
 DOC = ROOT / "docs" / "topic-matrix.md"
@@ -115,8 +115,8 @@ def _params(topic: Topic) -> str:
     parts = []
     for param in topic.params:
         title = PARAM_TITLES.get(param.kind, param.kind)
-        if param.default == "current_month":
-            parts.append(f"{title} — по умолчанию текущий месяц")
+        if param.default == "previous_month":
+            parts.append(f"{title} — по умолчанию прошлый месяц")
         elif param.required and param.ask:
             parts.append(f"{title} — спросить: «{param.ask}»")
         elif param.required:
@@ -204,6 +204,9 @@ def render() -> str:
             lines.append("")
         lines.append(f"Параметры: {_params(topic)}.")
         lines.append("")
+        if topic.answer_must:
+            titles = ", ".join(ANSWER_TITLES[kind] for kind in topic.answer_must)
+            lines += [f"В ответе обязательно: {titles} (проверяет `agent/validation.py`).", ""]
         if topic.notes:
             lines += [f"Важно: {topic.notes}", ""]
     return "\n".join(lines).rstrip() + "\n"

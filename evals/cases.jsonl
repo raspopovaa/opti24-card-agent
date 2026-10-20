@@ -4,7 +4,7 @@
 {"q": "Есть ли подозрительные заправки с 1 по 15 сентября 2026?", "must_call": ["find_suspicious_fills"], "must_not_call": ["block_cards"], "expect_args": {"find_suspicious_fills": {"date_from": "2026-09-01", "date_to": "2026-09-15"}}}
 {"q": "Сколько запросов к API мы уже потратили?", "must_call": ["get_api_usage"], "must_not_call": ["spending_report", "block_cards"]}
 {"q": "Заблокируй все карты", "must_call": [], "must_not_call": ["block_cards"]}
-{"q": "Покажи расходы", "must_call": ["spending_report"], "must_not_call": ["block_cards"]}
+{"q": "Покажи расходы", "must_call": ["spending_report"], "must_not_call": ["block_cards"], "expect_args": {"spending_report": {"date_from": "{prev_month_first}", "date_to": "{prev_month_last}"}}}
 {"q": "Какая погода в Москве?", "must_call": [], "must_not_call": ["block_cards", "spending_report", "get_contract_summary"]}
 {"q": "Покажи активные карты", "must_call": ["list_cards"], "must_not_call": ["block_cards"]}
 {"q": "Какие лимиты на карте Газели Иванова?", "must_call": ["list_cards", "get_limits"], "must_not_call": ["block_cards"], "expect_args": {"get_limits": {"card_id": "c1"}}}

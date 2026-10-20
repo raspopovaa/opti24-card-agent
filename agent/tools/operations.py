@@ -17,7 +17,7 @@ from ..money import rub, to_decimal
 from ..pricing import TERMS_EDITION, configured_service_fee, service_fee_for_volume, tiers_payload
 from ..safety import BudgetExceededError
 from . import common
-from .common import TransactionsUnavailableError, _check_dates, _error, _json, _rub_optional
+from .common import TransactionsUnavailableError, _check_dates, _error, _json, _rub_optional, limit_left
 from .context import ToolContext
 
 
@@ -301,6 +301,8 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                         "period": {"number": item.time.number, "type": item.time.type},
                         "amount": item.amount.model_dump() if item.amount else None,
                         "sum": item.sum.model_dump() if item.sum else None,
+                        "amount_left": limit_left(item.amount),
+                        "sum_left": limit_left(item.sum),
                         "exceeded": exceeded,
                     }
                 )

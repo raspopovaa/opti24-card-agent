@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 from apisdkopti24 import APIClient, APIError
@@ -39,6 +40,24 @@ def _rub_optional(value: float | int | str | None) -> str | None:
     if value is None or value == "":
         return None
     return rub(to_decimal(value))
+
+
+def limit_left(part: Any) -> str | None:
+    """Остаток лимита (установлено минус израсходовано) в Decimal; None, если чего-то нет.
+
+    Остаток считает код, а не модель: проверка ответа помечает числа, которых нет в данных.
+    """
+    values = part.model_dump() if part else {}
+    if values.get("value") is None or values.get("used") is None:
+        return None
+    return str(to_decimal(values["value"]) - to_decimal(values["used"]))
+
+
+def percent(part: int, whole: int) -> str | None:
+    """Доля в процентах с одним знаком после запятой; None, если делить не на что."""
+    if whole <= 0:
+        return None
+    return str((Decimal(part) * 100 / Decimal(whole)).quantize(Decimal("0.1")))
 
 
 def _iso(value: object) -> str:

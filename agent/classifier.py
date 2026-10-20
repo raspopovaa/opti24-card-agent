@@ -79,6 +79,16 @@ PARAM_TITLES = {
 }
 
 
+# Что ответ по теме обязан назвать (answer_must в матрице); проверяет agent/validation.py.
+ANSWER_TITLES = {
+    "period": "период",
+    "probable": "оговорка, что причина вероятная",
+    "heuristic": "оговорка, что это требует проверки",
+    "clause": "пункт или раздел договора",
+    "typical": "оговорка о типовой редакции договора",
+}
+
+
 @dataclass(frozen=True, slots=True)
 class Param:
     kind: str
@@ -105,6 +115,7 @@ class Topic:
     tools: tuple[str, ...]
     answer_fields: tuple[str, ...]
     params: tuple[Param, ...] = ()
+    answer_must: tuple[str, ...] = ()
     dictionaries: tuple[str, ...] = ()
     notes: str = ""
     supported: bool = True
@@ -155,6 +166,7 @@ def load_matrix(path: Path = MATRIX_PATH) -> tuple[Topic, ...]:
                 keywords=tuple(row.get("keywords", ())),
                 tools=tuple(row.get("tools", ())),
                 answer_fields=tuple(row.get("answer_fields", ())),
+                answer_must=tuple(row.get("answer_must", ())),
                 dictionaries=tuple(row.get("dictionaries", ())),
                 params=tuple(Param(**param) for param in row.get("params", ())),
                 notes=row.get("notes", ""),
@@ -220,10 +232,12 @@ def hint(found: Classification) -> str:
         parts.append(f"сначала инструменты: {', '.join(found.tools)}")
     for param in found.missing:
         title = PARAM_TITLES.get(param.kind, param.kind)
-        if param.default == "current_month":
-            parts.append(f"{title} не указан — возьми текущий месяц с 1-го числа по сегодня и назови его в ответе")
+        if param.default == "previous_month":
+            parts.append(f"{title} не указан — возьми прошлый месяц из квадратных скобок и назови его в ответе")
         elif param.ask:
             parts.append(f"не указан параметр «{title}» — сначала спроси: «{param.ask}», тарифицируемые инструменты до ответа не вызывай")
+    if primary.answer_must:
+        parts.append("в ответе обязательно: " + ", ".join(ANSWER_TITLES[kind] for kind in primary.answer_must))
     return "[Подсказка: " + "; ".join(parts) + ".]"
 
 

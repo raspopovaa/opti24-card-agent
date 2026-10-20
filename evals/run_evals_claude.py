@@ -31,7 +31,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agent.prompt import SYSTEM_PROMPT  # noqa: E402
+from agent.prompt import SYSTEM_PROMPT, dated_question  # noqa: E402
+from agent.validation import Evidence, check_answer  # noqa: E402
 from evals.run_evals import ToolInput, _describe_calls, check_case  # noqa: E402
 
 SERVER_NAME = "fuel-cards"
@@ -63,8 +64,39 @@ def parse_stream(lines: Iterable[str]) -> tuple[list[ToolInput], dict[str, Any] 
     return calls, result, model
 
 
+def tool_results(lines: Iterable[str]) -> list[str]:
+    """Тексты результатов инструментов агента из потока stream-json (события user/tool_result)."""
+    texts: list[str] = []
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or event.get("type") != "user":
+            continue
+        for block in event.get("message", {}).get("content", []):
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            content = block.get("content")
+            if isinstance(content, str):
+                texts.append(content)
+            elif isinstance(content, list):
+                texts += [part.get("text", "") for part in content if isinstance(part, dict)]
+    return texts
+
+
+def answer_problems(question: str, lines: list[str], calls: list[ToolInput], answer: str) -> list[str]:
+    """Проверка ответа агента так же, как в FuelCardAgent: числа из данных и обязательные элементы."""
+    evidence = Evidence()
+    evidence.add(SYSTEM_PROMPT)
+    evidence.add(question)
+    for text in tool_results(lines):
+        evidence.add(text)
+    return check_answer(answer, evidence, [name for name, _ in calls]).problems()
+
+
 def build_command(question: str, model: str, config_path: Path) -> list[str]:
-    prompt = f"[Сегодня {date.today():%Y-%m-%d}] {question}"
+    prompt = dated_question(question, date.today())
     return [
         "claude", "-p", prompt,
         "--model", model,
@@ -79,8 +111,10 @@ def build_command(question: str, model: str, config_path: Path) -> list[str]:
     ]  # fmt: skip
 
 
-async def run_once(question: str, model: str, config_path: Path, workdir: Path) -> tuple[list[ToolInput], str | None, str | None]:
-    """Один прогон: вызовы, текст ошибки (или None) и модель из события init."""
+async def run_once(
+    question: str, model: str, config_path: Path, workdir: Path
+) -> tuple[list[ToolInput], str | None, str | None, list[str]]:
+    """Один прогон: вызовы, текст ошибки (или None), модель из события init и замечания к ответу."""
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
     process = await asyncio.create_subprocess_exec(
         *build_command(question, model, config_path),
@@ -93,12 +127,13 @@ async def run_once(question: str, model: str, config_path: Path, workdir: Path) 
         stdout, stderr = await asyncio.wait_for(process.communicate(), CASE_TIMEOUT_SECONDS)
     except TimeoutError:
         process.kill()
-        return [], f"таймаут {CASE_TIMEOUT_SECONDS} с", None
-    calls, result, used_model = parse_stream(stdout.decode("utf-8", "replace").splitlines())
+        return [], f"таймаут {CASE_TIMEOUT_SECONDS} с", None, []
+    lines = stdout.decode("utf-8", "replace").splitlines()
+    calls, result, used_model = parse_stream(lines)
     if result is None or result.get("is_error"):
         reason = (result or {}).get("result") or stderr.decode("utf-8", "replace")
-        return calls, " ".join(str(reason).split())[:200] or f"код выхода {process.returncode}", used_model
-    return calls, None, used_model
+        return calls, " ".join(str(reason).split())[:200] or f"код выхода {process.returncode}", used_model, []
+    return calls, None, used_model, answer_problems(question, lines, calls, str(result.get("result") or ""))
 
 
 async def main(model: str, runs: int, limit: int | None, only: str | None = None, cases_file: Path | None = None) -> int:
@@ -118,11 +153,13 @@ async def main(model: str, runs: int, limit: int | None, only: str | None = None
         for case in cases:
             failures: list[tuple[list[ToolInput], list[str]]] = []
             for _ in range(runs):
-                calls, error, used_model = await run_once(case["q"], model, config_path, workdir)
+                calls, error, used_model, answer_notes = await run_once(case["q"], model, config_path, workdir)
                 if used_model and not shown_model:
                     print(f"Модель Claude Code: {used_model}, прогонов на кейс: {runs}")
                     shown_model = True
-                problems = [f"ошибка запуска: {error}"] if error else check_case(case, calls, date.today())
+                problems = (
+                    [f"ошибка запуска: {error}"] if error else check_case(case, calls, date.today()) + answer_notes
+                )
                 if problems:
                     failures.append((calls, problems))
             failed_cases += bool(failures)

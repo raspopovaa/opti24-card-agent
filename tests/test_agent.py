@@ -474,6 +474,7 @@ def test_limits_include_product_period_and_usage(tmp_path: Path) -> None:
     assert item["product"] == "Топливо"
     assert item["period"] == {"number": 1, "type": 5}
     assert item["sum"]["used"] == 231.46
+    assert item["sum_left"] == "8768.54" and item["amount_left"] is None  # остаток считает код
     assert out["total"] == 1 and budget.spent == 0
 
 

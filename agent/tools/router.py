@@ -81,7 +81,9 @@ class ToolRouter:
                     {"param": PARAM_TITLES.get(p.kind, p.kind), "ask": p.ask} for p in found.params if p.required and p.ask
                 ],
                 "defaults": [
-                    f"{PARAM_TITLES.get(p.kind, p.kind)}: текущий месяц" for p in found.params if p.default == "current_month"
+                    f"{PARAM_TITLES.get(p.kind, p.kind)}: прошлый месяц (даты в квадратных скобках)"
+                    for p in found.params
+                    if p.default == "previous_month"
                 ],
             }
         )

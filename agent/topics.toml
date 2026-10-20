@@ -20,11 +20,13 @@
 #                         точные («баланс», «платёж») — с «!», чтобы одного совпадения хватало;
 #   tools               — инструменты агента в порядке вызова;
 #   answer_fields       — «операция SDK:путь поля» в модели ответа, из которых берётся ответ;
+#   answer_must         — что ответ обязан назвать, если вызван первый инструмент темы
+#                         (period, probable, heuristic, clause, typical); проверяет agent/validation.py;
 #   dictionaries        — справочники API (get_dictionary), которыми код расшифровывает коды в ответе;
 #   supported = false   — агент этого не делает: reply объясняет почему и что делать;
 #   [[topic.params]]    — что нужно для ответа: kind (period, card, product, station, liters,
 #                         decline_code, transaction_id, reason, amount, region), required,
-#                         default (current_month) или ask — вопрос пользователю, если не указано.
+#                         default (previous_month) или ask — вопрос пользователю, если не указано.
 
 [[section]]
 id = "money"
@@ -92,6 +94,7 @@ goal = "Узнать, сколько потратили на топливо за
 examples = ["Сколько мы потратили на топливо в сентябре 2026?", "Сколько потратили в прошлом месяце?", "Покажи расходы"]
 keywords = ["потрат!", "расход!", "истрат!", "сколько ушло", "жжет", "жрет", "больше всех", "прожорлив"]
 tools = ["spending_report"]
+answer_must = ["period"]
 answer_fields = [
   "get_transactions_v2:data.result.sum",
   "get_transactions_v2:data.result.qty",
@@ -102,7 +105,7 @@ notes = "Операции видны через 1–2 часа после зап
   [[topic.params]]
   kind = "period"
   required = true
-  default = "current_month"
+  default = "previous_month"
 
 [[topic]]
 id = "fuel_price"
@@ -117,6 +120,7 @@ examples = [
 keywords = ["цен", "за литр!", "стоимость литра", "цена литра!", "цену топлива!", "реальная цена!", "комисс", "сбор", "обходится", "обошел", "почем"]
 dictionaries = ["Region"]
 tools = ["fuel_price_analytics", "get_contract_summary"]
+answer_must = ["period"]
 answer_fields = [
   "get_transactions_v2:data.result.price",
   "get_transactions_v2:data.result.price_no_discount",
@@ -129,7 +133,7 @@ notes = "Ставка сбора — по объёму прошлого меся
   [[topic.params]]
   kind = "period"
   required = true
-  default = "current_month"
+  default = "previous_month"
   [[topic.params]]
   kind = "product"
   required = false
@@ -153,7 +157,7 @@ notes = "Фактическая скидка — по операциям; про
   [[topic.params]]
   kind = "period"
   required = true
-  default = "current_month"
+  default = "previous_month"
 
 [[topic]]
 id = "cheaper_region"
@@ -164,6 +168,7 @@ examples = ["В каком регионе нам выгоднее заправл
 keywords = ["регион", "по регионам!", "выгодн!", "дешевл!", "где заправ", "дешевле всего"]
 dictionaries = ["Region"]
 tools = ["fuel_price_analytics"]
+answer_must = ["period"]
 answer_fields = [
   "get_transactions_v2:data.result.poi_id",
   "get_transactions_v2:data.result.price",
@@ -174,7 +179,7 @@ notes = "Сравнение по истории за период, а не по 
   [[topic.params]]
   kind = "period"
   required = true
-  default = "current_month"
+  default = "previous_month"
   [[topic.params]]
   kind = "product"
   required = false
@@ -187,6 +192,7 @@ goal = "Найти подозрительные заправки: ночные, 
 examples = ["Есть ли подозрительные заправки с 1 по 15 сентября 2026?", "Были ли ночные заправки?"]
 keywords = ["подозрит!", "аномал!", "ночн!", "слив!", "сливает!", "воровств!", "странн"]
 tools = ["find_suspicious_fills"]
+answer_must = ["period", "heuristic"]
 answer_fields = [
   "get_transactions_v2:data.result.timestamp",
   "get_transactions_v2:data.result.qty",
@@ -197,7 +203,7 @@ notes = "Эвристика, а не доказательство: «требу�
   [[topic.params]]
   kind = "period"
   required = true
-  default = "current_month"
+  default = "previous_month"
 
 [[topic]]
 id = "transactions"
@@ -207,6 +213,7 @@ goal = "Посмотреть конкретные заправки и опера
 examples = ["Покажи последние заправки за сентябрь 2026", "Покажи операции по карте за неделю"]
 keywords = ["заправк", "операц", "транзакц", "чеки", "покажи заправки!", "последние заправки!", "операции по карте!"]
 tools = ["list_transactions"]
+answer_must = ["period"]
 answer_fields = [
   "get_transactions_v2:data.result.timestamp",
   "get_transactions_v2:data.result.product_name",
@@ -217,7 +224,7 @@ answer_fields = [
   [[topic.params]]
   kind = "period"
   required = true
-  default = "current_month"
+  default = "previous_month"
   [[topic.params]]
   kind = "card"
   required = false
@@ -318,6 +325,7 @@ examples = [
 keywords = ["отказ!", "отказал", "отказали", "чек", "не работает!", "не проходит!", "не приняли!", "не принимает!", "не дали!", "не прошла!", "пин", "pin"]
 dictionaries = ["Goods", "ProductType"]
 tools = ["diagnose_fueling"]
+answer_must = ["probable"]
 answer_fields = [
   "get_card_detail:data.result.status",
   "get_card_detail:data.result.pin_counter",
@@ -410,7 +418,7 @@ notes = "Платежи — тарифицируемый запрос; посл�
   [[topic.params]]
   kind = "period"
   required = true
-  default = "current_month"
+  default = "previous_month"
 
 [[topic]]
 id = "documents"
@@ -431,7 +439,7 @@ notes = "Счета и документы бесплатны; документы
   [[topic.params]]
   kind = "period"
   required = true
-  default = "current_month"
+  default = "previous_month"
 
 [[topic]]
 id = "reports"
@@ -478,6 +486,7 @@ examples = [
 ]
 keywords = ["аванс!", "растор!", "до какого числа!", "нужно вернуть", "претенз!", "условия", "качеств"]
 tools = ["lookup_knowledge"]
+answer_must = ["clause", "typical"]
 answer_fields = []
 notes = "Только по выжимкам договора; пункт и редакция; без юридических гарантий."
 

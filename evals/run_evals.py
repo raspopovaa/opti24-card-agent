@@ -388,7 +388,11 @@ async def run_case(settings: Settings, case: dict[str, Any], runs: int, pause: f
                 ) from exc
             failed_runs.append((agent.tool_inputs, [describe_api_error(exc)]))
             continue
-        problems = check_case(case, agent.tool_inputs, date.today())
+        # Вызовы инструментов и сам ответ: числа из данных, обязательные элементы темы.
+        problems = check_case(case, agent.tool_inputs, date.today()) + agent.last_check.problems()
+        if agent.last_check.problems():
+            # Ответ на поддельных данных: показываем его, чтобы было видно, откуда взялось число.
+            problems.append("ответ: " + " ".join(agent.history[-1]["content"].split())[:400])
         if problems:
             failed_runs.append((agent.tool_inputs, problems))
     passed = runs - len(failed_runs)

@@ -16,11 +16,12 @@ from apisdkopti24 import APIClient
 from .classifier import classify, hint, log_question
 from .config import Settings
 from .core_types import Usage
-from .prompt import SYSTEM_PROMPT
+from .prompt import SYSTEM_PROMPT, dated_question
 from .providers import get_provider
 from .safety import ApprovalGate, AskHuman, BillingBudget
 from .tools import build_tools
 from .tools.router import ToolRouter
+from .validation import AnswerCheck, Evidence, check_answer
 
 
 def make_llm(settings: Settings) -> Any:
@@ -56,6 +57,23 @@ def make_llm(settings: Settings) -> Any:
     )
 
 
+def _recording(tool: Any, evidence: Evidence) -> Any:
+    """Запоминает результат инструмента как данные для проверки ответа.
+
+    Инструмент вызывают и Tool Runner Claude, и цикл OpenAI-совместимых моделей — оба через
+    ``tool.call``, поэтому перехват здесь работает для любого провайдера.
+    """
+    original = tool.call
+
+    async def call(tool_input: object) -> Any:
+        result = await original(tool_input)
+        evidence.add(result)
+        return result
+
+    tool.call = call
+    return tool
+
+
 @dataclass(slots=True)
 class FuelCardAgent:
     settings: Settings
@@ -70,13 +88,18 @@ class FuelCardAgent:
     gate: ApprovalGate = field(init=False)
     tools: list[Any] = field(init=False)
     router: ToolRouter | None = field(init=False, default=None)
+    # Числа из данных сессии и итог проверки последнего ответа (для evals и тестов).
+    evidence: Evidence = field(init=False)
+    last_check: AnswerCheck = field(init=False, default_factory=AnswerCheck)
 
     def __post_init__(self) -> None:
         self.budget = BillingBudget(limit=self.settings.max_billable_calls)
         self.gate = ApprovalGate(
             mode=self.settings.mode, ask=self.ask_human, audit_log=self.settings.audit_log
         )
-        self.tools = build_tools(self.opti24, self.budget, self.gate)
+        self.evidence = Evidence()
+        self.evidence.add(SYSTEM_PROMPT)
+        self.tools = [_recording(tool, self.evidence) for tool in build_tools(self.opti24, self.budget, self.gate)]
         # Двухуровневый выбор нужен там, где нет кеша промпта и модели слабее: у Claude полный набор
         # из 27 схем дёшев (кеш) и проверен на evals, поэтому для него маршрутизатор не включается.
         if get_provider(self.settings.provider).kind == "openai" and self.settings.tool_routing != "off":
@@ -87,7 +110,7 @@ class FuelCardAgent:
             self.llm = make_llm(self.settings)
         # Дата идёт в сообщении пользователя, а не в системной инструкции:
         # так инструкция остаётся неизменной и целиком берётся из кеша.
-        user_message = {"role": "user", "content": f"[Сегодня {date.today():%Y-%m-%d}] {question}"}
+        user_message = {"role": "user", "content": dated_question(question, date.today())}
         # Тема вопроса и подсказка по ней идут модели только с текущим вопросом: в истории они бы
         # устарела и сбивала следующие вопросы.
         found = classify(question)
@@ -95,6 +118,8 @@ class FuelCardAgent:
         note = hint(found)
         current = {**user_message, "content": f"{user_message['content']}\n{note}"} if note else user_message
         messages = [*self.history, current]
+        self.evidence.add(user_message["content"])
+        calls_before = len(self.tool_calls)
 
         if get_provider(self.settings.provider).kind == "anthropic":
             final_text = await self._ask_claude(messages)
@@ -114,6 +139,11 @@ class FuelCardAgent:
             )
             self.tool_calls += [name for name, _ in called]
             self.tool_inputs += called
+
+        # Ответ сверяется с данными до того, как его увидит человек: найденное дописывается к ответу.
+        self.last_check = check_answer(final_text, self.evidence, self.tool_calls[calls_before:])
+        if final_text and (note := self.last_check.note()):
+            final_text = f"{final_text}\n\n{note}"
 
         # В историю кладём только вопрос и итоговый ответ. Тяжёлые результаты
         # инструментов остаются за кадром, и следующий вопрос стоит дешевле.

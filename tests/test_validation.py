@@ -215,3 +215,22 @@ def test_openai_loop_records_only_executed_calls_with_fixed_arguments(tmp_path: 
         run_openai_loop(llm, "m", "sys", [{"role": "user", "content": "q"}], list(tools.values()), 5, Usage())
     )
     assert called == [("spending_report", {"date_from": "2026-08-01", "date_to": "2026-08-31"})]
+
+
+def test_bold_markdown_does_not_hide_the_number() -> None:
+    # Регрессия из прогона Cloud.ru: «**123 139,19 ₽**» проверялось как «139,19 ₽» и помечалось ложно.
+    data = evidence('{"balance": "123 139,19 ₽", "fee": 75}')
+    assert check_answer("На договоре **123 139,19 ₽** доступно.", data, []).ok
+    assert check_answer("Остаток **8 768,54 ₽**, сбор __75 %__.", evidence('{"left": "8768.54", "fee": 75}'), []).ok
+
+
+def test_masked_card_numbers_are_not_values() -> None:
+    assert check_answer("Карта ****2323 заблокирована, см. **c1**.", Evidence(), []).ok
+
+
+def test_no_data_answers_are_not_held_to_content_requirements() -> None:
+    # Регрессия из прогона: «операций не было» — требование «требует проверки» здесь не применяется.
+    answer = "За август операций не было. Подозрительных заправок не обнаружено."
+    assert check_answer(answer, Evidence(), ["find_suspicious_fills"]).ok
+    assert check_answer("По ДТ за сентябрь 0 заправок.", Evidence(), ["fuel_price_analytics"]).ok
+    assert not check_answer("Найдено 3 подозрительные заправки.", Evidence(), ["find_suspicious_fills"]).ok

@@ -21,6 +21,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     gate = ctx.gate
     limits_payload = ctx.limits_payload
     confirm_write = ctx.confirm_write
+    default_group_id = ctx.default_group_id
 
     @beta_async_tool
     async def list_cards(
@@ -37,6 +38,10 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             group_id: Показать только карты этой группы (ID из list_card_groups).
             query: Поиск по номеру карты или комментарию.
         """
+        defaults: dict[str, str] = {}
+        if not group_id and not query and default_group_id:  # поиск по номеру или имени — по всем картам
+            group_id = default_group_id
+            defaults["group_id"] = f"{group_id} (OPTI24_DEFAULT_GROUP_ID)"
         try:
             response = await client.cards.get_cards_v2(
                 status=status, group_id=group_id, q=query, onpage=MAX_LIST
@@ -55,6 +60,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                 "total": total,
                 "shown": len(cards),
                 **hint,
+                **({"defaults": defaults} if defaults else {}),
                 "cards": [
                     {
                         "id": c.id,

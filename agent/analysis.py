@@ -47,6 +47,11 @@ def _purchases(transactions: Iterable[Transaction]) -> list[Transaction]:
     return [t for t in transactions if t.type == PURCHASE and not t.is_storno]
 
 
+def purchased_volume(transactions: Iterable[Transaction]) -> Decimal:
+    """Литры (количество) покупок без сторно: объём, от которого зависит ставка сервисного сбора."""
+    return sum((to_decimal(t.qty) for t in _purchases(transactions)), Decimal("0"))
+
+
 def summarize(transactions: Iterable[Transaction], top: int = 5) -> dict[str, object]:
     items = list(transactions)
     purchases = _purchases(items)

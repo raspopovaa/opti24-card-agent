@@ -50,6 +50,10 @@ class ToolContext:
     purchase_check: Any
     limits_payload: Any
     confirm_write: Any
+    # Значения по умолчанию договора (переменные окружения) и почта пользователя из профиля.
+    default_product: str | None
+    default_group_id: str | None
+    profile_email: Any
 
 
 def make_context(
@@ -64,6 +68,17 @@ def make_context(
     ).expanduser()
 
     monthly_quota = int(os.environ.get("OPTI24_MONTHLY_QUOTA", DEFAULT_MONTHLY_QUOTA))
+    # Подставляются, только если пользователь не назвал своё: инструмент сообщает, что взял значение по умолчанию.
+    default_product = os.environ.get("OPTI24_DEFAULT_PRODUCT", "").strip() or None
+    default_group_id = os.environ.get("OPTI24_DEFAULT_GROUP_ID", "").strip() or None
+    profile: dict[str, str | None] = {}
+
+    async def profile_email() -> str | None:
+        """Почта пользователя, под которым агент вошёл в API: auth_user бесплатен, читается раз за сессию."""
+        if "email" not in profile:
+            auth = await client.auth.auth_user(contract_id=getattr(client, "contract_id", None))
+            profile["email"] = (auth.data.email or "").strip() or None
+        return profile["email"]
     # Размер пакета «известен», если его сообщил API или его явно задали: только тогда он
     # ограничивает бюджет. Значение по умолчанию — ориентир: общий счётчик стенда DEMO
     # показывает больше 500 запросов, и без этой оговорки тарифные вызовы были бы закрыты.
@@ -263,4 +278,7 @@ def make_context(
         purchase_check=purchase_check,
         limits_payload=limits_payload,
         confirm_write=confirm_write,
+        default_product=default_product,
+        default_group_id=default_group_id,
+        profile_email=profile_email,
     )

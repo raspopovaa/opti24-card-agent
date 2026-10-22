@@ -8,10 +8,10 @@ from typing import Any
 
 from anthropic import beta_async_tool
 from apisdkopti24 import APIError
-from apisdkopti24.errors import RequestValidationError
+from apisdkopti24.errors import ContractSelectionError, RequestValidationError
 
 from ..safety import BudgetExceededError
-from .common import _check_dates, _error, _json
+from .common import _check_dates, _error, _json, mask_email
 from .context import ToolContext
 
 
@@ -21,6 +21,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     budget = ctx.budget
     reports_root = ctx.reports_root
     confirm_write = ctx.confirm_write
+    profile_email = ctx.profile_email
 
     @beta_async_tool
     async def get_report_status() -> str:
@@ -78,6 +79,13 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         email = (email or "").strip() or None
         if email and "@" not in email:
             return _json({"error": "bad_request", "message": "Похоже, email указан неверно."})
+        email_source = "указан пользователем" if email else None
+        if email is None:
+            try:
+                email = await profile_email()
+            except (APIError, RequestValidationError, ContractSelectionError) as exc:
+                return _error(exc)
+            email_source = "по умолчанию: почта из профиля пользователя" if email else None
         cards = [str(item).strip() for item in (card_ids or []) if str(item).strip()] or None
         groups = [str(item).strip() for item in (group_ids or []) if str(item).strip()] or None
         summary = (
@@ -107,7 +115,9 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                 "status": "ordered",
                 "period": f"{date_from}…{date_to}",
                 "format": report_format,
-                "email": email,
+                # Модели — маскированная почта: полный адрес человек видел в подтверждении.
+                "email": mask_email(email),
+                "email_source": email_source,
                 "job_ids": list(response.data or []),
             }
         )

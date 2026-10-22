@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
@@ -10,11 +11,12 @@ from anthropic import beta_async_tool
 from apisdkopti24 import APIError
 from apisdkopti24.errors import RequestValidationError
 
-from ..analysis import AnomalyRules, find_anomalies, summarize
+from ..analysis import AnomalyRules, find_anomalies, purchased_volume, summarize
 from ..analysis import fuel_price_analytics as price_analytics
 from ..decline_codes import decode as decode_decline
 from ..money import rub, to_decimal
 from ..pricing import TERMS_EDITION, configured_service_fee, service_fee_for_volume, tiers_payload
+from ..prompt import previous_month
 from ..safety import BudgetExceededError
 from . import common
 from .common import TransactionsUnavailableError, _check_dates, _error, _json, _rub_optional, limit_left
@@ -30,6 +32,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     regions_for = ctx.regions_for
     station_info = ctx.station_info
     purchase_check = ctx.purchase_check
+    default_product = ctx.default_product
 
     @beta_async_tool
     async def spending_report(date_from: str, date_to: str, card_id: str | None = None) -> str:
@@ -79,6 +82,10 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             items = await transactions(date_from, date_to, card_id)
         except (APIError, BudgetExceededError, RequestValidationError, TransactionsUnavailableError) as exc:
             return _error(exc)
+        defaults: dict[str, str] = {}
+        if not product and default_product:
+            product = default_product
+            defaults["product"] = f"{product} (OPTI24_DEFAULT_PRODUCT)"
         if product:
             needle = product.casefold()
             items = [t for t in items if needle in (t.product_name or "").casefold()]
@@ -92,12 +99,26 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             fee = service_fee_for_volume(to_decimal(previous_month_liters))
             fee_source = f"ставка по объёму прошлого месяца, {TERMS_EDITION}"
         else:
-            fee_source = "неизвестен"
+            # Ставка зависит от литров за месяц перед периодом: считаем их кодом по операциям договора.
+            # Это тарифицируемые страницы операций (кеш на сессию); при нехватке бюджета ставка неизвестна.
+            month_from, month_to = previous_month(date.fromisoformat(date_from))
+            try:
+                before = await transactions(month_from.isoformat(), month_to.isoformat(), None)
+            except (APIError, BudgetExceededError, RequestValidationError, TransactionsUnavailableError) as exc:
+                fee_source = f"неизвестен: не загружены операции за {month_from:%Y-%m} ({type(exc).__name__})"
+            else:
+                liters = purchased_volume(before)
+                fee = service_fee_for_volume(liters)
+                fee_source = (
+                    f"ставка по объёму {month_from:%Y-%m}: {liters} л по операциям договора, {TERMS_EDITION}"
+                )
         result: dict[str, object] = {
             "period": f"{date_from}…{date_to}",
             **price_analytics(items, region_of, service_fee_percent=fee),
             "service_fee_source": fee_source,
         }
+        if defaults:
+            result["defaults"] = defaults
         if fee is None:
             result["service_fee_tiers"] = {"terms": TERMS_EDITION, "tiers": tiers_payload()}
         if unchecked:
@@ -280,6 +301,9 @@ def build(ctx: ToolContext) -> dict[str, Any]:
 
             # 2. Прямой ответ сервера: пройдёт ли покупка (бесплатно, только рабочий API).
             station = await station_info(poi_id) if poi_id else None
+            if not product and default_product:
+                product = default_product
+                receipt["product_assumed"] = f"{product} (OPTI24_DEFAULT_PRODUCT): в чеке не указан"
             purchase = await purchase_check(card_id, poi_id, product, liters, station)
 
             # 3. Продуктовые лимиты и остаток по ним.

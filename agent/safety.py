@@ -50,16 +50,21 @@ class ApprovalGate:
             approved = False
         else:
             approved = await self.ask(f"{summary}\nВыполнить? [да/нет]: ")
-        self._audit(action, objects, approved)
+        self._audit(action, objects, approved, asked=True)
         return approved
 
-    def _audit(self, action: str, objects: int, approved: bool) -> None:
+    def record_without_asking(self, action: str, objects: int) -> None:
+        """Обратимое действие выполнено без вопроса: пишем в журнал, что вопроса не было."""
+        self._audit(action, objects, approved=True, asked=False)
+
+    def _audit(self, action: str, objects: int, approved: bool, asked: bool = True) -> None:
         # В журнал не пишем номера карт и ID: только что, сколько и чем закончилось.
         record = {
             "at": datetime.now(UTC).isoformat(timespec="seconds"),
             "action": action,
             "objects": objects,
             "approved": approved,
+            "asked": asked,
         }
         self.decisions.append(record)
         with self.audit_log.open("a", encoding="utf-8") as fh:

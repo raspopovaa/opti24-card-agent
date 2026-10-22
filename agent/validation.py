@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+from bisect import bisect_left
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -96,13 +97,33 @@ def _claims(answer: str) -> list[_Claim]:
     return claims
 
 
+def _half_unit(value: Decimal) -> Decimal:
+    """Половина последнего знака, как он записан: у «1,93» — 0,005, у «200» — 0,5."""
+    exponent = value.as_tuple().exponent
+    return Decimal(10) ** exponent / 2 if isinstance(exponent, int) and exponent < 0 else Decimal("0.5")
+
+
 class Evidence:
-    """Числа из данных, которые агент получил в сессии: ответы инструментов, вопросы, инструкция."""
+    """Числа из данных, которые агент получил в сессии: ответы инструментов, вопросы, инструкция.
+
+    Число из ответа засчитывается, если оно есть в данных, получено из них процентом (3,75 % ↔ 0.0375)
+    или арифметикой из двух величин данных: разность, сумма, произведение или частное. Погрешность
+    считается по округлению исходных величин: «1,93 ₽/л» означает 1,925…1,935, и умноженное на
+    200,23 даёт 386,71 с допуском около 1 ₽. Поэтому арифметика принимается только в пределах этой
+    погрешности, а не «почти».
+    """
+
+    # Пары величин для арифметики: квадратичный рост, поэтому берём не больше стольких чисел.
+    MAX_PAIR_VALUES = 120
+    MAX_RELATIVE_ERROR = Decimal("0.005")
 
     def __init__(self) -> None:
         self._values: set[Decimal] = set()
+        self._derived: list[tuple[Decimal, Decimal]] | None = None  # (значение, допуск), по значению
+        self._max_bound = Decimal(0)
 
     def add(self, payload: object) -> None:
+        self._derived = None
         if not isinstance(payload, str):
             self._walk(payload)
             return
@@ -128,12 +149,53 @@ class Evidence:
             for value in node:
                 self._walk(value)
 
+    def _derived_values(self) -> list[tuple[Decimal, Decimal]]:
+        if self._derived is None:
+            operands = sorted(v for v in self._values if v != 0 and v < Decimal("1e12"))[: self.MAX_PAIR_VALUES]
+            found: dict[Decimal, Decimal] = {}
+            for index, left in enumerate(operands):
+                half_left = _half_unit(left)
+                for right in operands[index + 1 :]:
+                    half_right = _half_unit(right)
+                    candidates = [
+                        (left + right, half_left + half_right),
+                        (right - left, half_left + half_right),
+                        (left * right, left * half_right + right * half_left),
+                        (left / right, (half_left * right + half_right * left) / (right * right)),
+                        (right / left, (half_right * left + half_left * right) / (left * left)),
+                    ]
+                    for value, bound in candidates:
+                        found[value] = max(bound, found.get(value, Decimal(0)))
+            self._derived = sorted(found.items())
+            self._max_bound = max((bound for _, bound in self._derived), default=Decimal(0))
+        return self._derived
+
     def supports(self, claim: _Claim) -> bool:
         if any(abs(value - claim.value) <= claim.tolerance for value in self._values):
             return True
         if claim.percent:  # 3,75 % в данных бывает долей: 0.0375
             share, tolerance = claim.value / 100, claim.tolerance / 100
-            return any(abs(value - share) <= tolerance for value in self._values)
+            if any(abs(value - share) <= tolerance for value in self._values):
+                return True
+        return self._derived_supports(claim)
+
+    def _derived_supports(self, claim: _Claim) -> bool:
+        """Величина, посчитанная из двух данных, с учётом погрешности их округления."""
+        derived = self._derived_values()
+        targets = [(claim.value, claim.tolerance)]
+        if claim.percent:
+            targets.append((claim.value / 100, claim.tolerance / 100))
+        values = [value for value, _ in derived]
+        for target, tolerance in targets:
+            window = tolerance + self._max_bound
+            start = bisect_left(values, target - window)
+            for value, bound in derived[start:]:
+                if value > target + window:
+                    break
+                # Погрешность округления не больше полпроцента величины: иначе любое крупное число
+                # «совпадёт» с каким-нибудь произведением.
+                if abs(value - target) <= tolerance + bound and bound <= abs(target) * self.MAX_RELATIVE_ERROR:
+                    return True
         return False
 
 
@@ -177,7 +239,10 @@ class AnswerCheck:
         """Предупреждение для человека; пустое, если всё в порядке."""
         parts = []
         if self.unverified:
-            parts.append(f"чисел {', '.join(self.unverified)} нет в данных, полученных от API, — перепроверьте их")
+            parts.append(
+                f"чисел {', '.join(self.unverified)} нет в данных, которые API вернул в этой сессии. "
+                "Возможно, ответ составлен без нужного вызова инструмента: повторите вопрос с указанием периода"
+            )
         if self.missing:
             parts.append(f"в ответе не названо: {', '.join(self.missing)}")
         return "Проверка ответа: " + "; ".join(parts) + "." if parts else ""

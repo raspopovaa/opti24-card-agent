@@ -217,7 +217,7 @@ class FakeOpti24:
             contract_info = NS(id="c1", number="DEMO-1", cards_count=2)
             data = NS(
                 contracts=[contract_info], org_name="ООО Ромашка",
-                role_name="Администратор", read_only=False,
+                role_name="Администратор", read_only=False, email="user@example.ru",
             )
             return NS(data=data)
 

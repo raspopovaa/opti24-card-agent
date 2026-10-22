@@ -105,7 +105,8 @@ def _with_stations(fake: NS, calls: list[str]) -> None:
     fake.dictionaries = NS(get_azs_list_v1=get_azs_list_v1, get_dictionary=get_dictionary)
 
 
-def test_tool_resolves_regions_once_and_filters_product(tmp_path: Path) -> None:
+def test_tool_resolves_regions_once_and_filters_product(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("OPTI24_SERVICE_FEE_PERCENT", "1")  # ставка известна: операции прошлого месяца не нужны
     txs = [fill(1, "azs-msk", "ДТ", 100, "6000", "6100"), fill(2, "azs-tver", "АИ-95", 10, "650", "650")]
     fake, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, txs=txs)
     calls: list[str] = []
@@ -118,7 +119,8 @@ def test_tool_resolves_regions_once_and_filters_product(tmp_path: Path) -> None:
     assert calls == ["azs-msk"] and budget.spent == 1  # АЗС и страница операций — из кеша
 
 
-def test_tool_spends_budget_like_spending_report_and_shares_cache(tmp_path: Path) -> None:
+def test_tool_spends_budget_like_spending_report_and_shares_cache(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("OPTI24_SERVICE_FEE_PERCENT", "1")
     txs = [fill(1, "azs-msk", "ДТ", 100, "6000", "6000")]
     fake, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, txs=txs)
     _with_stations(fake, [])
@@ -186,12 +188,19 @@ def test_saving_estimate_includes_service_fee() -> None:
 def test_tool_picks_fee_by_previous_month_or_shows_tiers(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.delenv("OPTI24_SERVICE_FEE_PERCENT", raising=False)
     txs = [fill(1, "azs-msk", "ДТ", 100, "6000", "6000")]
-    fake, _, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, txs=txs)
+    # Бюджета хватает только на операции периода: ставку по объёму прошлого месяца не узнать.
+    fake, _, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, txs=txs, budget_limit=1)
     _with_stations(fake, [])
     period = {"date_from": "2026-09-01", "date_to": "2026-09-30"}
     unknown = json.loads(asyncio.run(tools["fuel_price_analytics"].call(period)))
-    assert unknown["service_fee_source"] == "неизвестен" and len(unknown["service_fee_tiers"]["tiers"]) == 5
-    assert "service_fee" not in unknown["by_product"][0]
+    assert unknown["service_fee_source"].startswith("неизвестен: не загружены операции за 2026-08")
+    assert len(unknown["service_fee_tiers"]["tiers"]) == 5 and "service_fee" not in unknown["by_product"][0]
+    # С бюджетом код сам считает литры месяца перед периодом (август) и берёт ставку по шкале.
+    fake, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, txs=txs)
+    _with_stations(fake, [])
+    counted = json.loads(asyncio.run(tools["fuel_price_analytics"].call(period)))
+    assert counted["service_fee_source"].startswith("ставка по объёму 2026-08: 100 л по операциям договора")
+    assert counted["by_product"][0]["service_fee"] == "225,00 ₽" and budget.spent == 2  # 3,75 % от 6 000 ₽
     by_volume = json.loads(
         asyncio.run(tools["fuel_price_analytics"].call({**period, "previous_month_liters": 120000}))
     )

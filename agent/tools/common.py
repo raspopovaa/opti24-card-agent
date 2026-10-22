@@ -53,6 +53,14 @@ def limit_left(part: Any) -> str | None:
     return str(to_decimal(values["value"]) - to_decimal(values["used"]))
 
 
+def mask_email(email: str | None) -> str | None:
+    """Почта для модели без лишних личных данных: «iv***@example.ru»."""
+    if not email or "@" not in email:
+        return None
+    name, domain = email.split("@", 1)
+    return f"{name[:2]}***@{domain}"
+
+
 def percent(part: int, whole: int) -> str | None:
     """Доля в процентах с одним знаком после запятой; None, если делить не на что."""
     if whole <= 0:

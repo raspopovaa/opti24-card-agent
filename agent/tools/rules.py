@@ -29,6 +29,13 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     budget = ctx.budget
     limits_payload = ctx.limits_payload
     confirm_write = ctx.confirm_write
+    default_group_id = ctx.default_group_id
+
+    def with_default_group(card_id: str | None, group_id: str | None) -> tuple[str | None, dict[str, str]]:
+        """Группа по умолчанию, если не указаны ни карта, ни группа (только для чтения правил)."""
+        if card_id or group_id or not default_group_id:
+            return group_id, {}
+        return default_group_id, {"group_id": f"{default_group_id} (OPTI24_DEFAULT_GROUP_ID)"}
 
     @beta_async_tool
     async def get_limits(card_id: str | None = None, group_id: str | None = None) -> str:
@@ -41,6 +48,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             return _json(
                 {"error": "bad_request", "message": "Укажи либо card_id, либо group_id (не оба)."}
             )
+        group_id, defaults = with_default_group(card_id, group_id)
         try:
             response = await client.limits.get_limits(card_id=card_id, group_id=group_id)
         except (APIError, RequestValidationError) as exc:
@@ -58,6 +66,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                 "total": total,
                 "shown": len(shown),
                 **hint,
+                **({"defaults": defaults} if defaults else {}),
                 "limits": await limits_payload(shown),
             }
         )
@@ -74,6 +83,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             return _json(
                 {"error": "bad_request", "message": "Укажи либо card_id, либо group_id (не оба)."}
             )
+        group_id, defaults = with_default_group(card_id, group_id)
         try:
             limits_response = await client.limits.get_limits(card_id=card_id, group_id=group_id)
             budget.spend()
@@ -119,6 +129,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         limits = await limits_payload(limits_response.data.result or [])
         return _json(
             {
+                **({"defaults": defaults} if defaults else {}),
                 "limits_total": limits_response.data.total_count,
                 "limits": limits,
                 "region_limits_total": regions_response.data.total_count,

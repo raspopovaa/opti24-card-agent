@@ -236,6 +236,7 @@ class FakeOpti24:
                 org_name="ООО Ромашка",
                 role_name="Администратор",
                 read_only=False,
+                email="user@example.ru",
             )
             return NS(data=data)
 

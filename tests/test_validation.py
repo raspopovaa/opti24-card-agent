@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -45,7 +46,7 @@ def test_numbers_from_tool_data_pass_in_any_russian_format() -> None:
 def test_number_missing_from_data_is_reported_with_its_unit() -> None:
     check = check_answer("Списано 12 345 ₽ по цене 51,20 ₽/л за апрель.", evidence(TOOL_OUTPUT), ["spending_report"])
     assert check.unverified == ("12 345 ₽", "51,20 ₽")
-    assert "12 345 ₽" in check.note() and "перепроверьте" in check.note()
+    assert "12 345 ₽" in check.note() and "без нужного вызова инструмента" in check.note()
     assert check.problems() == ["число не из данных: 12 345 ₽", "число не из данных: 51,20 ₽"]
 
 
@@ -148,7 +149,8 @@ def test_agent_appends_the_check_to_a_wrong_answer(monkeypatch: pytest.MonkeyPat
     assert first == "Доступно 123 139,19 ₽." and agent.last_check.ok
 
     second = asyncio.run(agent.ask("А сколько было?"))
-    assert second.startswith("Доступно 999 999,00 ₽.\n\nПроверка ответа:")
+    assert second.startswith("Доступно 999 999,00 ₽.\n\n")
+    assert "Проверка ответа:" in second  # вопрос «А сколько было?» не относится к теме: инструмент не назван
     assert agent.last_check.unverified == ("999 999,00 ₽",)
     assert agent.history[-1]["content"] == second  # человек и история видят одно и то же
 
@@ -234,3 +236,134 @@ def test_no_data_answers_are_not_held_to_content_requirements() -> None:
     assert check_answer(answer, Evidence(), ["find_suspicious_fills"]).ok
     assert check_answer("По ДТ за сентябрь 0 заправок.", Evidence(), ["fuel_price_analytics"]).ok
     assert not check_answer("Найдено 3 подозрительные заправки.", Evidence(), ["find_suspicious_fills"]).ok
+
+
+MAY_2024 = json.dumps(
+    {
+        "product_prices": [
+            {
+                "product": "Аи-95",
+                "liters": 200.23,
+                "amount": 9351.63,
+                "price_per_liter": 46.71,
+                "gas_station_price": 48.64,
+                "discount_per_liter": 1.93,
+                "discount_total": -386.71,
+                "price_with_fee": 48.46,
+                "service_fee": 350.87,
+            }
+        ],
+        "service_fee_percent": 3.75,
+    }
+)
+
+
+def test_numbers_derived_from_api_fields_are_accepted() -> None:
+    # Регрессия из диалога: «1,93 = 48,64 − 46,71» и «386,71 ≈ 1,93 × 200,23» помечались ложно.
+    answer = (
+        "Май: 200,23 л, 46,71 ₽/л, АЗС 48,64 ₽/л, скидка 1,93 ₽/л (386,71 ₽ всего), "
+        "со сбором 48,46 ₽/л, сбор 350,87 ₽, ставка 3,75 %."
+    )
+    assert check_answer(answer, evidence(MAY_2024), ["fuel_price_analytics"]).ok
+
+
+def test_arithmetic_does_not_accept_arbitrary_numbers() -> None:
+    # Погрешность округления крупных величин большая: произвольная сумма не должна «совпасть».
+    data = evidence(MAY_2024)
+    for fabricated in ("5 000 ₽", "12 345 ₽", "999 999 ₽", "70 000 ₽"):
+        assert check_answer(f"Итого {fabricated}.", data, []).unverified == (fabricated,), fabricated
+
+
+def test_instruction_forbids_invented_numbers_and_requires_the_formula() -> None:
+    from agent.prompt import SYSTEM_PROMPT
+
+    assert "Цифры берутся только из ответов инструментов" in SYSTEM_PROMPT
+    assert "напиши в ответе, как оно получено" in SYSTEM_PROMPT
+    assert "Сырой JSON ответа инструмента в чат не выводи" in SYSTEM_PROMPT
+
+
+def _agent_with(monkeypatch, tmp_path, verify: str, replies):  # type: ignore[no-untyped-def]
+    from agent.config import Settings
+    from agent.core import FuelCardAgent
+    from tests.test_agent import FakeOpti24
+
+    monkeypatch.setenv("AGENT_PROVIDER", "custom")
+    monkeypatch.setenv("AGENT_TOOL_ROUTING", "off")
+    monkeypatch.setenv("AGENT_VERIFY_ANSWER", verify)
+    monkeypatch.setenv("AGENT_AUDIT_LOG", str(tmp_path / "audit.jsonl"))
+    monkeypatch.delenv("AGENT_TOPIC_LOG", raising=False)
+    fake = FakeOpti24([])
+
+    async def never(_: str) -> bool:
+        return False
+
+    agent = FuelCardAgent(settings=Settings.from_env(), opti24=fake, ask_human=never)  # type: ignore[arg-type]
+    queue = iter(replies)
+
+    async def create(**_: object) -> NS:
+        return next(queue)
+
+    agent.llm = NS(chat=NS(completions=NS(create=create)))
+    return agent, fake
+
+
+def _text(content: str) -> NS:
+    return NS(choices=[NS(message=NS(content=content, tool_calls=None))], usage=None)
+
+
+def test_verification_calls_the_topic_tool_and_confirms_the_number(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    # Модель назвала число без вызова инструмента: проверка сама вызывает get_contract_summary и сверяет.
+    agent, _ = _agent_with(monkeypatch, tmp_path, "on", [_text("Доступно 123 139,19 ₽.")])
+    answer = asyncio.run(agent.ask("Сколько денег осталось на договоре?"))
+    assert "сверены повторным вызовом get_contract_summary" in answer
+    # Вызов проверки — действие системы, а не выбор модели: в tool_calls (оценка выбора) его нет.
+    assert agent.last_check.ok and agent.tool_calls == []
+
+
+def test_verification_reports_numbers_that_still_do_not_match(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    agent, _ = _agent_with(monkeypatch, tmp_path, "on", [_text("Доступно 999 999,00 ₽.")])
+    answer = asyncio.run(agent.ask("Сколько денег осталось на договоре?"))
+    assert "часть чисел не подтвердилась" in answer and "999 999,00 ₽" in agent.last_check.unverified[0]
+
+
+def test_verification_can_be_switched_off(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    agent, _ = _agent_with(monkeypatch, tmp_path, "off", [_text("Доступно 123 139,19 ₽.")])
+    answer = asyncio.run(agent.ask("Сколько денег осталось на договоре?"))
+    assert agent.tool_calls == [] and "Проверка" not in answer.replace("Проверка ответа", "")  # только примечание
+
+
+def test_plan_repeats_question_calls_but_never_write_tools() -> None:
+    from agent.verification import plan_verification
+
+    tools = {"get_limits": object(), "block_cards": object()}
+    plan = plan_verification(
+        [("get_limits", {"card_id": "c1"}), ("block_cards", {"card_ids": ["c1"]}), ("get_limits", {"card_id": "c1"})],
+        None, date(2026, 10, 22), tools,  # type: ignore[arg-type]
+    )
+    assert plan.calls == [("get_limits", {"card_id": "c1"})] and plan.skipped == []
+
+
+def test_plan_without_calls_uses_topic_tool_with_previous_month(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from agent.classifier import classify
+    from agent.verification import plan_verification
+
+    class Tool:
+        def to_dict(self) -> dict:
+            return {"input_schema": {"required": ["date_from", "date_to"]}}
+
+    topic = classify("Покажи расходы").primary
+    plan = plan_verification([], topic, date(2026, 10, 22), {"spending_report": Tool()})  # type: ignore[dict-item]
+    assert plan.calls == [("spending_report", {"date_from": "2026-09-01", "date_to": "2026-09-30"})]
+
+
+def test_plan_does_not_invent_a_card(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from agent.classifier import classify
+    from agent.verification import plan_verification
+
+    class Tool:
+        def to_dict(self) -> dict:
+            return {"input_schema": {"required": ["card_id"]}}
+
+    topic = classify("Почему карта не работает?").primary
+    plan = plan_verification([], topic, date(2026, 10, 22), {"diagnose_fueling": Tool()})  # type: ignore[dict-item]
+    assert plan.calls == [] and "card_id" in plan.skipped[0]

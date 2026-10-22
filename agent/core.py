@@ -13,7 +13,7 @@ from typing import Any
 
 from apisdkopti24 import APIClient
 
-from .classifier import classify, hint, log_question
+from .classifier import Topic, classify, hint, log_question
 from .config import Settings
 from .core_types import Usage
 from .prompt import SYSTEM_PROMPT, dated_question
@@ -22,6 +22,7 @@ from .safety import ApprovalGate, AskHuman, BillingBudget
 from .tools import build_tools
 from .tools.router import ToolRouter
 from .validation import AnswerCheck, Evidence, check_answer
+from .verification import plan_verification
 
 
 def make_llm(settings: Settings) -> Any:
@@ -87,6 +88,7 @@ class FuelCardAgent:
     budget: BillingBudget = field(init=False)
     gate: ApprovalGate = field(init=False)
     tools: list[Any] = field(init=False)
+    tools_by_name: dict[str, Any] = field(init=False)
     router: ToolRouter | None = field(init=False, default=None)
     # Числа из данных сессии и итог проверки последнего ответа (для evals и тестов).
     evidence: Evidence = field(init=False)
@@ -100,6 +102,7 @@ class FuelCardAgent:
         self.evidence = Evidence()
         self.evidence.add(SYSTEM_PROMPT)
         self.tools = [_recording(tool, self.evidence) for tool in build_tools(self.opti24, self.budget, self.gate)]
+        self.tools_by_name = {tool.name: tool for tool in self.tools}
         # Двухуровневый выбор нужен там, где нет кеша промпта и модели слабее: у Claude полный набор
         # из 27 схем дёшев (кеш) и проверен на evals, поэтому для него маршрутизатор не включается.
         if get_provider(self.settings.provider).kind == "openai" and self.settings.tool_routing != "off":
@@ -120,6 +123,7 @@ class FuelCardAgent:
         messages = [*self.history, current]
         self.evidence.add(user_message["content"])
         calls_before = len(self.tool_calls)
+        inputs_before = len(self.tool_inputs)
 
         if get_provider(self.settings.provider).kind == "anthropic":
             final_text = await self._ask_claude(messages)
@@ -142,6 +146,11 @@ class FuelCardAgent:
 
         # Ответ сверяется с данными до того, как его увидит человек: найденное дописывается к ответу.
         self.last_check = check_answer(final_text, self.evidence, self.tool_calls[calls_before:])
+        if final_text and self.settings.verify_answer and self.last_check.unverified:
+            self.last_check, recheck_note = await self._recheck(
+                final_text, found.primary, self.tool_inputs[inputs_before:]
+            )
+            final_text = f"{final_text}\n\n{recheck_note}" if recheck_note else final_text
         if final_text and (note := self.last_check.note()):
             final_text = f"{final_text}\n\n{note}"
 
@@ -149,6 +158,35 @@ class FuelCardAgent:
         # инструментов остаются за кадром, и следующий вопрос стоит дешевле.
         self.history += [user_message, {"role": "assistant", "content": final_text}]
         return final_text or "Не удалось получить ответ: попробуйте переформулировать вопрос."
+
+    async def _recheck(
+        self, answer: str, topic: Topic | None, question_calls: list[tuple[str, dict[str, Any]]]
+    ) -> tuple[AnswerCheck, str]:
+        """Повторно вызывает инструменты для сверки и сравнивает числа со свежими ответами.
+
+        Сравнение идёт только со свежими данными: старые ответы этого вопроса уже не подтвердили числа.
+        """
+        plan = plan_verification(question_calls, topic, date.today(), self.tools_by_name)
+        fresh = Evidence()
+        ran: list[str] = []
+        problems = list(plan.skipped)
+        for name, args in plan.calls:
+            try:
+                fresh.add(await self.tools_by_name[name].call(args))
+            except Exception as exc:  # noqa: BLE001 — сбой проверки не должен ронять ответ; пишем его в примечание
+                problems.append(f"{name}: {type(exc).__name__}")
+                continue
+            ran.append(name)
+        if not ran:
+            return self.last_check, f"Проверка не выполнена: {'; '.join(problems)}." if problems else ""
+        check = check_answer(answer, fresh, ran, None)
+        if check.ok:
+            text = f"Проверка: числа сверены повторным вызовом {', '.join(ran)}."
+        else:
+            text = f"Проверка повторным вызовом {', '.join(ran)}: часть чисел не подтвердилась."
+        if problems:
+            text += f" Не выполнено: {'; '.join(problems)}."
+        return check, text
 
     async def _ask_claude(self, messages: list[dict[str, Any]]) -> str:
         runner = self.llm.beta.messages.tool_runner(

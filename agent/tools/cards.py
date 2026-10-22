@@ -10,6 +10,7 @@ from apisdkopti24.errors import RequestValidationError
 
 from ..config import Mode
 from ..safety import BudgetExceededError
+from .catalog import IRREVERSIBLE_ACTIONS
 from .common import MAX_LIST, _error, _iso, _json, _rub_optional
 from .context import ToolContext
 
@@ -181,12 +182,17 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                     "Так и скажи пользователю; включить изменение можно запуском с AGENT_MODE=confirm.",
                 }
             )
-        approved = await gate.approve(
-            action,
-            # Человек видит, какие именно карты меняются; в журнал ID не попадают.
-            f"{verb} карт: {len(card_ids)} ({', '.join(card_ids)}). Причина: {reason}",
-            len(card_ids),
-        )
+        # Блокировку и разблокировку можно отменить обратной операцией: спрашиваем только необратимое.
+        if action in IRREVERSIBLE_ACTIONS:
+            approved = await gate.approve(
+                action,
+                # Человек видит, какие именно карты меняются; в журнал ID не попадают.
+                f"{verb} карт: {len(card_ids)} ({', '.join(card_ids)}). Причина: {reason}",
+                len(card_ids),
+            )
+        else:
+            gate.record_without_asking(action, len(card_ids))
+            approved = True
         if not approved:
             return _json(
                 {

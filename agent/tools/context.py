@@ -19,6 +19,7 @@ from ..knowledge import load_sections
 from ..money import to_decimal
 from ..safety import ApprovalGate, BillingBudget
 from . import common
+from .catalog import IRREVERSIBLE_ACTIONS
 from .common import (
     DEFAULT_MONTHLY_QUOTA,
     MAX_LIST,
@@ -242,7 +243,11 @@ def make_context(
         return result
 
     async def confirm_write(action: str, summary: str, objects: int = 1) -> str | None:
-        """None — можно выполнять; строка — готовый отказ (read_only или declined)."""
+        """None — можно выполнять; строка — готовый отказ (read_only или declined).
+
+        Вопрос человеку задаётся только для необратимых действий (IRREVERSIBLE_ACTIONS); остальные
+        изменения выполняются сразу, но журнал их фиксирует. Режим read_only запрещает всё.
+        """
         if gate.mode is Mode.READ_ONLY:
             gate._audit(action, objects, False)
             return _json(
@@ -253,6 +258,9 @@ def make_context(
                     "Так и скажи пользователю; включить изменение можно запуском с AGENT_MODE=confirm.",
                 }
             )
+        if action not in IRREVERSIBLE_ACTIONS:
+            gate.record_without_asking(action, objects)
+            return None
         if not await gate.approve(action, summary, objects):
             return _json(
                 {"status": "declined", "message": "Пользователь не подтвердил действие: данные не тронуты."}

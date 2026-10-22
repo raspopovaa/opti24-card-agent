@@ -362,10 +362,26 @@ def make_tools(
     return fake, budget, tools
 
 
-def test_block_requires_confirmation(tmp_path: Path) -> None:
+def test_block_runs_without_question_because_it_is_reversible(tmp_path: Path) -> None:
     fake, _, tools = make_tools(Mode.CONFIRM, answer=False, tmp=tmp_path)
     out = json.loads(asyncio.run(tools["block_cards"].call({"card_ids": ["a"], "reason": "тест"})))
-    assert out["status"] == "declined" and fake.blocked == []
+    assert out["status"] == "blocked" and fake.blocked == ["a"]
+    log = (tmp_path / "audit.jsonl").read_text(encoding="utf-8")
+    assert '"asked": false' in log and '"approved": true' in log
+
+
+def test_irreversible_actions_still_need_a_yes(tmp_path: Path) -> None:
+    fake, budget, tools = make_tools(Mode.CONFIRM, answer=False, tmp=tmp_path, budget_limit=5)
+    removed = json.loads(asyncio.run(tools["remove_limit"].call({"limit_id": "l1"})))
+    ordered = json.loads(
+        asyncio.run(
+            tools["order_fuel_report"].call({"date_from": "2026-09-01", "date_to": "2026-09-30", "card_ids": ["c1"]})
+        )
+    )
+    assert removed["status"] == "declined" and ordered["status"] == "declined"
+    assert fake.ordered_reports == [] and budget.spent == 0
+    log = (tmp_path / "audit.jsonl").read_text(encoding="utf-8")
+    assert '"asked": true' in log and '"approved": false' in log
 
 
 def test_block_works_after_yes_and_is_audited(tmp_path: Path) -> None:
@@ -436,7 +452,7 @@ def test_block_dedupes_ids_and_shows_them_to_human(tmp_path: Path) -> None:
     )
     assert out["status"] == "blocked" and out["done"] == ["c7"] and out["not_done"] == []
     assert fake.blocked == ["c7"]
-    assert "c7" in asked[0]
+    assert asked == []  # блокировка обратима: вопроса нет, результат с ID возвращается агенту
     assert "c7" not in (tmp_path / "audit.jsonl").read_text(encoding="utf-8")
 
 

@@ -28,6 +28,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     client = ctx.client
     budget = ctx.budget
     transactions = ctx.transactions
+    source = ctx.transactions_source
     product_label = ctx.product_label
     regions_for = ctx.regions_for
     station_info = ctx.station_info
@@ -52,7 +53,9 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             items = await transactions(date_from, date_to, card_id)
         except (APIError, BudgetExceededError, RequestValidationError, TransactionsUnavailableError) as exc:
             return _error(exc)
-        return _json({"period": f"{date_from}…{date_to}", **summarize(items)})
+        return _json(
+            {"period": f"{date_from}…{date_to}", **summarize(items), **source(date_from, date_to, card_id)}
+        )
 
     @beta_async_tool
     async def fuel_price_analytics(
@@ -117,6 +120,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             **price_analytics(items, region_of, service_fee_percent=fee),
             "service_fee_source": fee_source,
         }
+        result.update(source(date_from, date_to, card_id))
         if defaults:
             result["defaults"] = defaults
         if fee is None:
@@ -162,6 +166,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         return _json(
             {
                 "period": f"{date_from}…{date_to}",
+                **source(date_from, date_to, card_id),
                 "total": total,
                 "shown": len(shown),
                 **(
@@ -239,7 +244,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             items = await transactions(date_from, date_to, card_id)
         except (APIError, BudgetExceededError, RequestValidationError, TransactionsUnavailableError) as exc:
             return _error(exc)
-        return _json(find_anomalies(items, AnomalyRules()))
+        return _json({**find_anomalies(items, AnomalyRules()), **source(date_from, date_to, card_id)})
 
     @beta_async_tool
     async def diagnose_fueling(

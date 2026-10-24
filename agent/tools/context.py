@@ -20,6 +20,7 @@ from ..config import Mode
 from ..db import OperationStore, open_store
 from ..knowledge import load_sections
 from ..money import to_decimal
+from ..rag import KnowledgeIndex, embedder_from_env, index_path
 from ..safety import ApprovalGate, BillingBudget
 from . import common
 from .common import (
@@ -90,7 +91,7 @@ def make_context(
     # показывает больше 500 запросов, и без этой оговорки тарифные вызовы были бы закрыты.
     quota_configured = os.environ.get("OPTI24_MONTHLY_QUOTA") is not None
     # Выжимки договора маленькие и читаются один раз при старте, а не в асинхронном пути.
-    knowledge = load_sections()
+    knowledge = KnowledgeIndex(load_sections(), embedder_from_env(), index_path())
 
     def quota_payload(info: Any) -> dict[str, object]:
         """Расход месячного пакета; при известном размере бюджет сессии не больше остатка."""

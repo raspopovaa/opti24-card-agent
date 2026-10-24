@@ -14,7 +14,8 @@ from typing import Any
 
 from .core_types import UsageSink
 
-MAX_TOOL_OUTPUT = 6000  # символов: слишком длинный ответ инструмента обрезаем
+MAX_TOOL_OUTPUT = 6000  # символов: слишком длинный ответ инструмента сокращаем
+_PARTIAL_HINT = "Ответ сокращён: показана часть. Скажи об этом и предложи сузить период или фильтр."
 
 
 def to_openai_tools(tools: Sequence[Any]) -> list[dict[str, Any]]:
@@ -106,8 +107,42 @@ async def _run_tool(
         result = await tool.call(fixed)
     except Exception as exc:  # noqa: BLE001 — ошибку инструмента отдаём модели, а не роняем цикл
         return json.dumps({"error": type(exc).__name__, "message": str(exc)[:300]}, ensure_ascii=False)
+    return fit_tool_output(result)
+
+
+def fit_tool_output(result: Any, limit: int = MAX_TOOL_OUTPUT) -> str:
+    """Ответ инструмента не длиннее limit символов, всегда целым JSON.
+
+    Обрезка строки посередине давала модели битый JSON без пометки, что данных больше.
+    Здесь укорачиваются самые длинные списки, а в ответ добавляются truncated и hint;
+    если и этого мало, отдаётся начало текста с той же пометкой.
+    """
     text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
-    return text[:MAX_TOOL_OUTPUT]
+    if len(text) <= limit:
+        return text
+
+    if isinstance(result, dict):
+        trimmed = dict(result)
+        shown: dict[str, dict[str, int]] = {}
+        while True:
+            lists = [(len(v), k) for k, v in trimmed.items() if isinstance(v, list) and v]
+            if not lists:
+                break
+            size, key = max(lists)
+            total = shown.get(key, {}).get("total", size)
+            trimmed[key] = trimmed[key][: size // 2]
+            shown[key] = {"shown": len(trimmed[key]), "total": total}
+            candidate = {**trimmed, "truncated": shown, "hint": _PARTIAL_HINT}
+            text = json.dumps(candidate, ensure_ascii=False)
+            if len(text) <= limit:
+                return text
+
+    head = {"truncated": True, "hint": _PARTIAL_HINT, "partial": ""}
+    room = limit - len(json.dumps(head, ensure_ascii=False)) - 16
+    partial = text[: max(room, 0)]
+    while len(json.dumps({**head, "partial": partial}, ensure_ascii=False)) > limit and partial:
+        partial = partial[: len(partial) - 64]  # экранирование кавычек удлиняет строку
+    return json.dumps({**head, "partial": partial}, ensure_ascii=False)
 
 
 async def run_openai_loop(

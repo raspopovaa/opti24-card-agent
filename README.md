@@ -19,7 +19,7 @@
 python -m agent.dashboard    # только дашборд договора, без модели и без ключей ИИ
 python -m agent              # дашборд + диалог в терминале
 python scripts/smoke_test.py # проверка на настоящем API (DEMO), без модели
-pytest                       # 350 тестов без сети и без ключей
+pytest                       # 353 теста без сети и без ключей
 ruff check agent scripts evals tests && mypy agent  # проверки качества кода, их же запускает CI
 python scripts/estimate_cost.py
 python evals/run_evals.py --runs 3  # оценка агента: инструменты и их аргументы (нужен ключ модели)
@@ -312,15 +312,15 @@ OPTI24_ENV_FILE=~/.opti24-production.env AGENT_CONTRACT_ID=<ID-договора>
 | `lookup_knowledge` | без API: выжимки договора в `docs/knowledge/` | бесплатный | нет |
 | `lookup_dictionary` | `get_dictionary` (справочники: статусы, схемы скидки, условия оплаты, услуги АЗС, офисы) | бесплатный | нет |
 | `get_api_usage` | `get_info` | бесплатный | нет |
-| `block_cards` | `block_card` | тарифицируемый | нет, в журнал |
-| `set_card_comment` | `set_card_comment` | тарифицируемый | нет, в журнал |
-| `set_limit` | `set_limit` | тарифицируемый | нет, в журнал |
-| `set_region_limit` | `set_region_limit` | тарифицируемый | нет, в журнал |
-| `set_restriction` | `set_restriction` | тарифицируемый | нет, в журнал |
-| `order_fuel_report` | `order_report_v1` | тарифицируемый, на DEMO недоступен | **да** |
-| `remove_limit` | `remove_limit` | тарифицируемый | **да** |
-| `remove_region_limit` | `remove_region_limit` | тарифицируемый | **да** |
-| `remove_restriction` | `remove_restriction` | тарифицируемый | **да** |
+| `block_cards` | `block_card` | тарифицируемый | **да, с подтверждением** |
+| `set_card_comment` | `set_card_comment` | тарифицируемый | **да, с подтверждением** |
+| `set_limit` | `set_limit` | тарифицируемый | **да, с подтверждением** |
+| `set_region_limit` | `set_region_limit` | тарифицируемый | **да, с подтверждением** |
+| `set_restriction` | `set_restriction` | тарифицируемый | **да, с подтверждением** |
+| `order_fuel_report` | `order_report_v1` | тарифицируемый, на DEMO недоступен | **да, с подтверждением** |
+| `remove_limit` | `remove_limit` | тарифицируемый | **да, с подтверждением** |
+| `remove_region_limit` | `remove_region_limit` | тарифицируемый | **да, с подтверждением** |
+| `remove_restriction` | `remove_restriction` | тарифицируемый | **да, с подтверждением** |
 
 **Вопросы по договору.** `lookup_knowledge` ищет ответы в выжимках типового договора в
 [`docs/knowledge/`](docs/knowledge/README.md): цены и скидки, сервисный сбор, блокировка и
@@ -382,7 +382,7 @@ OPTI24_ENV_FILE=~/.opti24-production.env AGENT_CONTRACT_ID=<ID-договора>
 QR, шаблоны. Их добавляем по одному, каждый с подтверждением и тестом.
 
 **Режимы.** `AGENT_MODE=read_only` (по умолчанию) — изменяющий инструмент всегда
-отклоняется. `AGENT_MODE=confirm` — агент спрашивает «да/нет» только перед необратимыми действиями: удалением лимитов, региональных правил и ограничителей и заказом платного отчёта. Блокировка, разблокировка, комментарий и лимиты выполняются сразу и записываются в журнал (`asked: false`).
+отклоняется. `AGENT_MODE=confirm` — перед изменением агент спрашивает «да/нет».
 
 ## 4. Как выбирали модель и сколько это экономит
 

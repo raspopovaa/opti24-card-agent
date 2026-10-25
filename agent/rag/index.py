@@ -28,7 +28,7 @@ DEFAULT_PATH = Path("data/knowledge.db")
 MIN_SIMILARITY = 0.52  # bge-m3: 0.50–0.55 — 35/40 верно и 5/5 «не по теме» без ответа
 _RRF_K = 60
 # Признаки неуверенного ответа: агент переспрашивает клиента вместо ответа.
-CLOSE_GAP = 0.02  # первый и второй раздел почти равны по сходству
+CLOSE_GAP = 0.03  # первый и второй раздел почти равны по сходству
 LOW_MARGIN = 0.03  # лучший раздел едва выше порога
 
 _SCHEMA = """
@@ -89,8 +89,8 @@ class KnowledgeIndex:
     async def answer(self, query: str, top: int = 3) -> dict[str, object]:
         """Разделы для lookup_knowledge и уверенность поиска.
 
-        confidence="low" и doubts — поиск сомневается: агент спрашивает клиента, какой
-        из разделов (alternatives) он имеет в виду, а не отвечает по первому.
+        confidence="low" и doubts — поиск сомневается: агент отвечает по первому разделу
+        и называет другие (alternatives), чтобы клиент поправил, если спрашивал о них.
         """
         found, method = await self.search(query, top)
         result: dict[str, object] = {"sections": found, "search": method, "confidence": "high"}

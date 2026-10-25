@@ -237,8 +237,9 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             )
         if answer.get("confidence") == "low":
             answer["message"] = (
-                "Поиск не уверен в разделе: спроси клиента, о каком из alternatives вопрос, "
-                "и вызови lookup_knowledge снова с уточнённым вопросом."
+                "Поиск не уверен в разделе: ответь по первому разделу и назови другие варианты из "
+                "alternatives — спроси клиента, не о них ли вопрос. Если клиент уточнит, вызови "
+                "lookup_knowledge снова с уточнённым вопросом."
             )
         return _json({"found": len(found), **answer, "sections": found})
 

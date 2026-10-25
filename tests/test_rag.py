@@ -181,4 +181,4 @@ def test_lookup_knowledge_tells_agent_to_ask(tmp_path: Path, monkeypatch: pytest
 
     found = json.loads(asyncio.run(tools["lookup_knowledge"].call({"question": "сервисный сбор, посеял"})))
 
-    assert found["confidence"] == "low" and "спроси клиента" in found["message"]
+    assert found["confidence"] == "low" and "ответь по первому разделу" in found["message"]

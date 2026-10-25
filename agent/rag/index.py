@@ -51,12 +51,25 @@ class KnowledgeIndex:
         self._min_similarity = min_similarity
         self._vectors: list[list[float]] | None = None
 
-    async def search(self, query: str, top: int = 3) -> tuple[list[dict[str, str]], str]:
-        """Лучшие разделы и способ поиска: "hybrid" или "words" (без векторов)."""
+    async def search(
+        self, query: str, top: int = 3, fusion: str = "vectors_first"
+    ) -> tuple[list[dict[str, str]], str]:
+        """Лучшие разделы и способ поиска: "hybrid" или "words" (без векторов).
+
+        fusion="rrf" — слияние рангов с равным весом, для сравнения в check_knowledge_search.
+        """
         by_words = [section for _, section in rank(self._sections, query)]
         by_meaning = await self._by_meaning(query)
         if by_meaning is None:
             return [as_result(section) for section in by_words[:top]], "words"
+        if fusion == "rrf":
+            scores: dict[int, float] = {}
+            for ranked in (by_words, by_meaning):
+                for place, section in enumerate(ranked):
+                    scores[id(section)] = scores.get(id(section), 0.0) + 1.0 / (61 + place)
+            merged = {id(section): section for section in by_words + by_meaning}
+            best = sorted(merged, key=lambda key: -scores[key])[:top]
+            return [as_result(merged[key]) for key in best], "hybrid"
 
         # Сначала векторы: на bge-m3 они верны в 6 из 8 вопросов сравнения, слова — в 3,
         # а слияние рангов с равным весом — в 5 (ошибка слов тянула итог вниз). Слова

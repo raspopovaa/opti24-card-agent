@@ -20,8 +20,15 @@ from apisdkopti24.models.restrictions import RestrictionRequestItem
 
 from ..config import Mode
 from ..safety import BudgetExceededError
-from .common import MAX_LIST, _error, _json, describe_limit, period_words
+from .common import MAX_LIST, _error, _json, describe_limit, limit_matches, period_words, verified
 from .context import ToolContext
+
+# Региональные лимиты и ограничители бесплатно не перечитать: get_access_rules — 2 тарифицируемых запроса.
+PAID_CHECK = verified(
+    None,
+    "Автоматически не сверено: проверка — get_access_rules (2 тарифицируемых запроса). "
+    "Предложи пользователю, а не вызывай сам.",
+)
 
 
 def build(ctx: ToolContext) -> dict[str, Any]:
@@ -63,6 +70,31 @@ def build(ctx: ToolContext) -> dict[str, Any]:
 
     def read_only() -> bool:
         return ctx.gate.mode is Mode.READ_ONLY
+
+    async def limit_check(
+        card_id: str | None, group_id: str | None, limit_ids: list[str], same: Any, *, removed: bool = False
+    ) -> dict[str, str]:
+        """Сверка лимитов после изменения по бесплатному get_limits: оператор мог ответить и не применить."""
+        if not limit_ids:
+            return verified(None, "Оператор не вернул ID лимита: изменение не применено.")
+        try:
+            response = await client.limits.get_limits(card_id=card_id, group_id=group_id)
+            now = {str(i.id): i for i in response.data.result or []}
+        except (APIError, RequestValidationError):
+            return verified(None, "get_limits не ответил: проверь лимиты цели позже.")
+        if removed:
+            gone = all(i not in now for i in limit_ids)
+            return verified(
+                gone, "Лимита больше нет в get_limits." if gone else "Лимит ещё виден в get_limits: проверь позже."
+            )
+        wrong = [i for i in limit_ids if i not in now or not same(now[i])]
+        if wrong:
+            return verified(
+                False,
+                f"В get_limits лимит {', '.join(wrong)} не совпал с подтверждённым: покажи пользователю "
+                "текущий лимит из get_limits и не повторяй изменение без человека.",
+            )
+        return verified(True, "Лимит в get_limits совпал с подтверждённым.")
 
     def not_found(card_id: str | None, group_id: str | None) -> str:
         what = f"Карты с ID {card_id}" if card_id else f"Группы с ID {group_id}"
@@ -341,9 +373,15 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         )
         if failed:
             return failed
-        limit_ids = list(response.data or [])
-        finish(approval, "done" if limit_ids else "not_done", {"limit_ids": limit_ids})
-        return _json({"status": "saved", "limit_ids": limit_ids})
+        limit_ids = [str(i) for i in (response.data or [])]
+        period = (period_number, period_type)
+        check = await limit_check(
+            card_id, group_id, limit_ids, lambda found: limit_matches(found, liters, rubles, period)
+        )
+        finish(
+            approval, "done" if limit_ids else "not_done", {"limit_ids": limit_ids, "verified": check["status"]}
+        )
+        return _json({"status": "saved", "limit_ids": limit_ids, "verified": check})
 
     @beta_async_tool
     async def set_region_limit(
@@ -409,8 +447,8 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         if failed:
             return failed
         ids = list(response.data or [])
-        finish(approval, "done" if ids else "not_done", {"region_limit_ids": ids})
-        return _json({"status": "saved", "region_limit_ids": ids})
+        finish(approval, "done" if ids else "not_done", {"region_limit_ids": ids, "verified": "not_checked"})
+        return _json({"status": "saved", "region_limit_ids": ids, "verified": PAID_CHECK})
 
     @beta_async_tool
     async def set_restriction(
@@ -474,8 +512,8 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         if failed:
             return failed
         ids = list(response.data or [])
-        finish(approval, "done" if ids else "not_done", {"restriction_ids": ids})
-        return _json({"status": "saved", "restriction_ids": ids})
+        finish(approval, "done" if ids else "not_done", {"restriction_ids": ids, "verified": "not_checked"})
+        return _json({"status": "saved", "restriction_ids": ids, "verified": PAID_CHECK})
 
     @beta_async_tool
     async def remove_limit(limit_id: str, card_id: str | None = None, group_id: str | None = None) -> str:
@@ -512,8 +550,13 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         )
         if failed:
             return failed
-        finish(approval, "done" if response.data else "not_done")
-        return _json({"status": "removed", "limit_id": limit_id, "removed": bool(response.data)})
+        check = (
+            await limit_check(card_id, group_id, [limit_id], lambda _: False, removed=True)
+            if response.data
+            else verified(None, "Оператор не удалил лимит.")
+        )
+        finish(approval, "done" if response.data else "not_done", {"verified": check["status"]})
+        return _json({"status": "removed", "limit_id": limit_id, "removed": bool(response.data), "verified": check})
 
     async def remove_rule(kind: str, action: str, key: str, rule_id: str, group_id: str | None, call: Any) -> str:
         """Удаление регионального лимита или ограничителя по правилу из последнего get_access_rules."""
@@ -541,10 +584,10 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         response, failed = await perform(approval, lambda: call(rule_id), "правила цели в get_access_rules")
         if failed:
             return failed
-        finish(approval, "done" if response.data else "not_done")
+        finish(approval, "done" if response.data else "not_done", {"verified": "not_checked"})
         if response.data:
             rules_seen.pop(f"{kind}:{rule_id}", None)
-        return _json({"status": "removed", key: rule_id, "removed": bool(response.data)})
+        return _json({"status": "removed", key: rule_id, "removed": bool(response.data), "verified": PAID_CHECK})
 
     @beta_async_tool
     async def remove_region_limit(region_limit_id: str, group_id: str | None = None) -> str:

@@ -10,8 +10,13 @@ from apisdkopti24.errors import RequestValidationError
 
 from ..config import Mode
 from ..safety import BudgetExceededError, mask_card_number
-from .common import MAX_LIST, _error, _iso, _json, _rub_optional, describe_card
+from .common import MAX_LIST, _error, _iso, _json, _rub_optional, describe_card, mask_phone, verified
 from .context import ToolContext
+
+
+def is_locked(status: object) -> bool:
+    """Карта заблокирована: коды Locked(Client) и Locked(Manager) из справочника CardStatus."""
+    return str(status or "").startswith("Locked")
 
 
 def build(ctx: ToolContext) -> dict[str, Any]:
@@ -129,7 +134,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                         ),
                         "position": d.position,
                         "role": d.role,
-                        "phone": d.mobile_phone,
+                        "phone": mask_phone(d.mobile_phone),
                     }
                     for d in (drivers_response.data.result or [])
                 ]
@@ -206,13 +211,31 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             return failed
         done = [str(item) for item in (response.data or [])]
         not_done = [card_id for card_id in card_ids if card_id not in done]
-        finish(approval, "partial" if not_done else "done", {"done": done, "not_done": not_done})
+        # Оператор может ответить «принято» и не применить: статус перечитывается бесплатным списком карт.
+        after = await cards_by_id(done) if done else {}
+        stale = [c for c in done if c not in after or is_locked(after[c].status) != block]
+        if not done:
+            check = verified(None, "Оператор не изменил ни одной карты.")
+        elif stale:
+            check = verified(
+                False,
+                f"Статус в list_cards не изменился у карт {', '.join(stale)}: он может обновиться с задержкой. "
+                "Проверь list_cards позже и не повторяй изменение без человека.",
+            )
+        else:
+            check = verified(True, "Статус карт в list_cards совпал с подтверждённым.")
+        finish(
+            approval,
+            "partial" if not_done else "done",
+            {"done": done, "not_done": not_done, "verified": check["status"]},
+        )
         return _json(
             {
                 "status": "partial" if not_done else ("blocked" if block else "unblocked"),
                 "requested": len(card_ids),
                 "done": done,
                 "not_done": not_done,
+                "verified": check,
             }
         )
 
@@ -257,13 +280,25 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         )
         if failed:
             return failed
-        finish(approval, "done" if response.data else "not_done")
+        if response.data:
+            after = (await cards_by_id([card_id])).get(card_id)
+            same = after is not None and (after.comment or "") == comment
+            check = verified(
+                same,
+                "Комментарий в list_cards совпал с подтверждённым."
+                if same
+                else "Комментарий в list_cards пока прежний: проверь позже и не повторяй изменение без человека.",
+            )
+        else:
+            check = verified(None, "Оператор не сохранил комментарий.")
+        finish(approval, "done" if response.data else "not_done", {"verified": check["status"]})
         return _json(
             {
                 "status": "updated",
                 "card_id": card_id,
                 "comment": comment,
                 "saved": bool(response.data),
+                "verified": check,
             }
         )
 

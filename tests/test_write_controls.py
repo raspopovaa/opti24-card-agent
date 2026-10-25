@@ -57,6 +57,7 @@ def test_audit_has_decision_and_outcome_with_same_id(tmp_path: Path) -> None:
     decision, outcome = audit(tmp_path)
     assert decision["event"] == "decision" and outcome["event"] == "outcome"
     assert decision["id"] == outcome["id"] and decision["decided_by"] == "terminal"
+    assert decision["operator"]  # кто из людей подтвердил: AGENT_OPERATOR или пользователь ОС
     assert decision["target"] == {"card_ids": ["c1"], "cards": ["…0001"]} and decision["args_sha256"]
     assert outcome["status"] == "done" and outcome["done"] == ["c1"]
     assert "секретная" not in (tmp_path / "audit.jsonl").read_text(encoding="utf-8")
@@ -142,4 +143,56 @@ def test_card_lookup_reads_next_pages_until_card_is_found(tmp_path: Path) -> Non
 
     fake.cards.get_cards_v2 = paged
     call(tools, "block_cards", {"card_ids": ["far"], "reason": "x"})
-    assert pages == [1, 2] and "7826010000009999 (ID far)" in asked[0]
+    # Страницы 1–2 до подтверждения и ещё раз после блокировки: сверка статуса.
+    assert pages == [1, 2, 1, 2] and "7826010000009999 (ID far)" in asked[0]
+
+
+def test_operator_name_comes_from_env(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv("AGENT_OPERATOR", "Логист Петров")
+    _, tools, _ = setup(tmp_path)
+    call(tools, "block_cards", {"card_ids": ["c1"], "reason": "x"})
+    assert audit(tmp_path)[0]["operator"] == "Логист Петров"
+
+
+def test_block_is_rechecked_in_card_list(tmp_path: Path) -> None:
+    fake, tools, _ = setup(tmp_path)
+    out = call(tools, "block_cards", {"card_ids": ["c1"], "reason": "x"})
+    assert out["verified"]["status"] == "match"
+    assert audit(tmp_path)[-1]["verified"] == "match"
+
+    async def accepted_but_ignored(*, card_ids: list[str], block: bool) -> NS:
+        return NS(data=list(card_ids))  # оператор ответил «принято», статус не изменился
+
+    fake.cards.block_card = accepted_but_ignored
+    out = call(tools, "block_cards", {"card_ids": ["a"], "reason": "x"})
+    assert out["verified"]["status"] == "mismatch" and "не повторяй" in out["verified"]["message"]
+
+
+def test_comment_is_rechecked(tmp_path: Path) -> None:
+    _, tools, _ = setup(tmp_path)
+    out = call(tools, "set_card_comment", {"card_id": "c1", "comment": "Камаз, Петров"})
+    assert out["verified"]["status"] == "match"
+
+
+def test_set_limit_is_rechecked_by_free_get_limits(tmp_path: Path) -> None:
+    fake, tools, _ = setup(tmp_path)
+    # В get_limits у l1: 9000 ₽ на период (1, 5); тот же лимит после изменения совпадает.
+    same = {"card_id": "c1", "rubles": 9000, "period_type": 5, "limit_id": "l1"}
+    assert call(tools, "set_limit", same)["verified"]["status"] == "match"
+    other = {**same, "rubles": 5000}
+    out = call(tools, "set_limit", other)
+    assert out["verified"]["status"] == "mismatch" and fake.saved_limits
+
+
+def test_remove_limit_is_rechecked_and_rules_say_not_checked(tmp_path: Path) -> None:
+    fake, tools, _ = setup(tmp_path, budget=10)
+    out = call(tools, "remove_limit", {"limit_id": "l1", "card_id": "c1"})
+    assert out["verified"]["status"] == "mismatch"  # в фейке лимит после удаления остаётся
+
+    async def empty(**_: object) -> NS:
+        return NS(data=NS(result=[], total_count=0))
+
+    call(tools, "get_access_rules", {"card_id": "c1"})
+    fake.limits.get_limits = empty
+    out = call(tools, "set_region_limit", {"card_id": "c1", "region": "SPE", "limit_type": 2})
+    assert out["verified"]["status"] == "not_checked" and "get_access_rules" in out["verified"]["message"]

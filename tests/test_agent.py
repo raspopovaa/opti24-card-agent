@@ -108,6 +108,9 @@ class FakeOpti24:
 
         async def block_card(*, card_ids: list[str], block: bool) -> NS:
             self.blocked += card_ids if block else []
+            for c in (card, *self.more_cards):
+                if c.id in card_ids:
+                    c.status, c.status_name = ("Locked(Client)", "Заблокирована") if block else ("Active", "Активна")
             return NS(data=list(card_ids))
 
         card = NS(
@@ -260,6 +263,9 @@ class FakeOpti24:
 
         async def set_card_comment(**kwargs: object) -> NS:
             self.comments.append((str(kwargs["card_id"]), str(kwargs["comment"])))
+            for c in (card, *self.more_cards):
+                if c.id == kwargs["card_id"]:
+                    c.comment = str(kwargs["comment"])
             return NS(data=True)
 
         async def set_limit(**kwargs: object) -> NS:
@@ -495,6 +501,8 @@ def test_card_profile_includes_driver_and_limits(tmp_path: Path) -> None:
     assert out["number"] == "7826010000000001"
     assert out["group"] == "Грузовые"
     assert out["drivers"][0]["name"] == "Иванов Иван"
+    # Телефон водителя модели не нужен целиком: только конец номера, чтобы отличить водителей.
+    assert out["drivers"][0]["phone"] == "…-00"
     assert out["limits"][0]["product"] == "Топливо"
     assert budget.spent == 2
 
@@ -942,6 +950,9 @@ def test_cloudru_deepseek_is_the_default(monkeypatch: pytest.MonkeyPatch) -> Non
         "k",
     )
     assert str(make_llm(s).base_url).startswith("https://foundation-models.api.cloud.ru/v1")
+    # Повторная сверка тратит пакет API, поэтому по умолчанию выключена.
+    monkeypatch.delenv("AGENT_VERIFY_ANSWER", raising=False)
+    assert Settings.from_env().verify_answer is False
     monkeypatch.delenv("AGENT_API_KEY")
     with pytest.raises(RuntimeError, match="AGENT_API_KEY"):
         make_llm(Settings.from_env())
@@ -1217,6 +1228,56 @@ def test_web_server_pages_chat_and_origin_checks(monkeypatch) -> None:
     assert b"404" in missing
     assert "ответ: привет".encode() in chat_ok or b"\\u043e" in chat_ok
     assert b"404" in bad_origin and b"404" in bad_host
+
+
+def test_web_refresh_spends_quota_only_from_own_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import date
+
+    import agent.web as web
+    from agent.dashboard import Dashboard
+
+    collected: list[int] = []
+
+    async def fake_collect(*_a, **_k):
+        collected.append(1)
+        return Dashboard(today=date(2026, 10, 17))
+
+    monkeypatch.setattr(web, "collect", fake_collect)
+    monkeypatch.setattr(web, "CACHE_SECONDS", -1)
+
+    async def run():
+        app = web.Server(client=None, production=False, settings=None, port=0)  # type: ignore[arg-type]
+        server = await asyncio.start_server(app.handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        app.port = port
+        host = f"Host: localhost:{port}\r\n"
+
+        async def send(raw: str) -> bytes:
+            r, w = await asyncio.open_connection("127.0.0.1", port)
+            w.write(raw.encode())
+            await w.drain()
+            data = await r.read()
+            w.close()
+            return data
+
+        async with server:
+            first = await send(f"GET / HTTP/1.1\r\n{host}\r\n")
+            # Картинка или ссылка на чужом сайте: старый адрес обновления больше не тратит пакет.
+            await send(f"GET /?refresh=1 HTTP/1.1\r\n{host}Sec-Fetch-Site: cross-site\r\n\r\n")
+            await send(f"GET /?refresh=1 HTTP/1.1\r\n{host}\r\n")
+            evil = await send(f"POST /refresh HTTP/1.1\r\n{host}Origin: http://evil.example\r\n\r\n")
+            evil_fetch = await send(f"POST /refresh HTTP/1.1\r\n{host}Sec-Fetch-Site: cross-site\r\n\r\n")
+            after_evil = len(collected)
+            own = await send(
+                f"POST /refresh HTTP/1.1\r\n{host}Origin: http://localhost:{port}\r\n"
+                "Sec-Fetch-Site: same-origin\r\n\r\n"
+            )
+            return first, evil, evil_fetch, after_evil, own
+
+    first, evil, evil_fetch, after_evil, own = asyncio.run(run())
+    assert b"200 OK" in first and b'action="/refresh"' in first
+    assert b"404" in evil and b"404" in evil_fetch and after_evil == 1
+    assert b"303 See Other" in own and b"Location: /" in own and len(collected) == 2
 
 
 def test_openai_tool_args_tolerate_broken_json() -> None:

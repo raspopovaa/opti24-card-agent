@@ -228,7 +228,10 @@ def render_page(board: Dashboard, production: bool, fetched_at: float) -> str:
         f'<header><h1>Пульт топливных карт</h1><span class="badge">{badge}</span>'
         f'<span class="badge">{escape(str(board.contract.get("Договор", "")))}</span>'
         f'<span class="age">{board.today:%d.%m.%Y} · данные получены {age} с назад · '
-        '<a class="btn" style="color:#fff;border-color:#fff7;padding:3px 10px" href="/?refresh=1">Обновить</a></span></header><main>'
+        # Обновление тратит пакет API, поэтому только POST со своей страницы: ссылка или картинка
+        # на чужом сайте не может его вызвать.
+        '<form method="post" action="/refresh" style="display:inline">'
+        '<button style="color:#fff;border-color:#fff7;padding:3px 10px">Обновить</button></form></span></header><main>'
         f"{_kpis(board)}"
         f'<div class="grid">{_kv("Карты", board.cards)}{_kv("Запросы API", board.api)}</div>'
         f'<div class="grid">{_recent(ch.get("recent"))}{_daily(ch.get("daily"))}{_structure(board.month.get("Топливо"))}'
@@ -279,6 +282,9 @@ class Server:
         allowed_hosts = {f"localhost:{self.port}", f"127.0.0.1:{self.port}"}
         if headers.get("host", "") not in allowed_hosts:
             return False
+        # Браузер помечает запрос с чужой страницы: Sec-Fetch-Site не same-origin и не none.
+        if headers.get("sec-fetch-site", "same-origin") not in {"same-origin", "none"}:
+            return False
         origin = headers.get("origin")
         return origin is None or origin in {f"http://{h}" for h in allowed_hosts}
 
@@ -292,8 +298,12 @@ class Server:
             method, _, rest = request.partition(" ")
             path = rest.split(" ")[0]
             content_type = "text/html; charset=utf-8"
+            location = ""
             if method == "GET" and path.split("?")[0] == "/" and (self.port == 0 or self._local_origin(headers)):
-                status, body = "200 OK", await self.page("refresh=1" in path)
+                status, body = "200 OK", await self.page(refresh=False)
+            elif method == "POST" and path == "/refresh" and self._local_origin(headers):
+                await self.page(refresh=True)
+                status, body, location = "303 See Other", "", "Location: /\r\n"
             elif method == "POST" and path == "/chat" and self._local_origin(headers):
                 content_type = "application/json; charset=utf-8"
                 try:
@@ -310,7 +320,7 @@ class Server:
             data = body.encode("utf-8")
             writer.write(
                 f"HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\n"
-                f"Content-Length: {len(data)}\r\nCache-Control: no-store\r\n"
+                f"Content-Length: {len(data)}\r\nCache-Control: no-store\r\n{location}"
                 "Connection: close\r\n\r\n".encode("ascii") + data
             )
             await writer.drain()

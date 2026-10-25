@@ -93,12 +93,34 @@ def describe_limit(item: Any) -> str:
     return f"лимит {item.id}: {', '.join(sizes) or 'размер не указан'} на {period}, продукт {product}"
 
 
+def verified(matched: bool | None, message: str) -> dict[str, str]:
+    """Сверка после изменения: match, mismatch или not_checked и что сказать человеку."""
+    status = "not_checked" if matched is None else ("match" if matched else "mismatch")
+    return {"status": status, "message": message}
+
+
+def limit_matches(item: Any, liters: float | None, rubles: float | None, period: tuple[int, int]) -> bool:
+    """Лимит из get_limits совпадает с подтверждённым: размер и период."""
+    for part, want in ((getattr(item, "amount", None), liters), (getattr(item, "sum", None), rubles)):
+        have = getattr(part, "value", None) if part is not None else None
+        if want is not None and (have is None or to_decimal(have) != to_decimal(want)):
+            return False
+    time = getattr(item, "time", None)
+    return time is not None and (int(time.number), int(time.type)) == period
+
+
 def mask_email(email: str | None) -> str | None:
     """Почта для модели без лишних личных данных: «iv***@example.ru»."""
     if not email or "@" not in email:
         return None
     name, domain = email.split("@", 1)
     return f"{name[:2]}***@{domain}"
+
+
+def mask_phone(phone: str | None) -> str | None:
+    """Телефон для модели без лишних личных данных: последние 2 цифры, «…-00»."""
+    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    return f"…-{digits[-2:]}" if len(digits) >= 2 else None
 
 
 def percent(part: int, whole: int) -> str | None:

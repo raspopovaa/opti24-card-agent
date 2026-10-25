@@ -78,7 +78,8 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         if not limit_ids:
             return verified(None, "Оператор не вернул ID лимита: изменение не применено.")
         try:
-            now = {str(i.id): i for i in (await client.limits.get_limits(card_id=card_id, group_id=group_id)).data.result or []}
+            response = await client.limits.get_limits(card_id=card_id, group_id=group_id)
+            now = {str(i.id): i for i in response.data.result or []}
         except (APIError, RequestValidationError):
             return verified(None, "get_limits не ответил: проверь лимиты цели позже.")
         if removed:
@@ -373,8 +374,9 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         if failed:
             return failed
         limit_ids = [str(i) for i in (response.data or [])]
+        period = (period_number, period_type)
         check = await limit_check(
-            card_id, group_id, limit_ids, lambda found: limit_matches(found, liters, rubles, (period_number, period_type))
+            card_id, group_id, limit_ids, lambda found: limit_matches(found, liters, rubles, period)
         )
         finish(
             approval, "done" if limit_ids else "not_done", {"limit_ids": limit_ids, "verified": check["status"]}

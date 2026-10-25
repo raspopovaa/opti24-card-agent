@@ -90,17 +90,25 @@ def test_model_failure_falls_back_to_words(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(("question", "section"), QUESTIONS.items())
 def test_word_answers_stay_in_results_with_vectors(question: str, section: str) -> None:
-    # Векторы идут первыми, но раздел, найденный словами, из ответа не пропадает.
+    # Даже со слабой моделью раздел, найденный словами, из ответа не пропадает.
     index = KnowledgeIndex(load_sections(), HashEmbedder(), None)
 
     assert section in _search(index, question)[0]
 
 
-def test_vectors_rank_first_and_words_fill_the_rest(tmp_path: Path) -> None:
-    # «Сбор» по словам находит «Сервисный сбор», а модель считает вопрос блокировкой.
+def test_section_found_by_words_and_meaning_comes_first(tmp_path: Path) -> None:
+    # Векторы ставят блокировку и сбор вровень, слова находят только сбор: он и первый.
     index = KnowledgeIndex(SECTIONS, ConceptEmbedder(), tmp_path / "k.db")
 
-    assert _search(index, "сбор, потерял карту") == (["Как заблокировать карту", "Сервисный сбор"], "hybrid")
+    assert _search(index, "сервисный сбор, посеял")[0][0] == "Сервисный сбор"
+
+
+def test_vectors_first_keeps_model_order(tmp_path: Path) -> None:
+    index = KnowledgeIndex(SECTIONS, ConceptEmbedder(), tmp_path / "k.db")
+
+    found, _ = asyncio.run(index.search("сбор, потерял карту", fusion="vectors_first"))
+
+    assert [item["section"] for item in found] == ["Как заблокировать карту", "Сервисный сбор"]
 
 
 def test_embedder_is_off_unless_model_is_set(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -27,6 +27,9 @@ from .embeddings import Embedder, cosine
 DEFAULT_PATH = Path("data/knowledge.db")
 MIN_SIMILARITY = 0.52  # bge-m3: 0.50–0.55 — 35/40 верно и 5/5 «не по теме» без ответа
 _RRF_K = 60
+# Признаки неуверенного ответа: агент переспрашивает клиента вместо ответа.
+CLOSE_GAP = 0.02  # первый и второй раздел почти равны по сходству
+LOW_MARGIN = 0.03  # лучший раздел едва выше порога
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS vectors (
@@ -54,6 +57,8 @@ class KnowledgeIndex:
         default = float(setting) if setting else MIN_SIMILARITY
         self._min_similarity = default if min_similarity is None else min_similarity
         self._vectors: list[list[float]] | None = None
+        # Последний вопрос и его сходства: search и answer не считают вектор вопроса дважды.
+        self._last: tuple[str, list[tuple[float, Section]]] | None = None
 
     async def search(
         self, query: str, top: int = 3, fusion: str = "vectors_first"
@@ -81,6 +86,26 @@ class KnowledgeIndex:
         best = sorted(merged, key=lambda key: -scores[key])[:top]
         return [as_result(merged[key]) for key in best], "hybrid"
 
+    async def answer(self, query: str, top: int = 3) -> dict[str, object]:
+        """Разделы для lookup_knowledge и уверенность поиска.
+
+        confidence="low" и doubts — поиск сомневается: агент спрашивает клиента, какой
+        из разделов (alternatives) он имеет в виду, а не отвечает по первому.
+        """
+        found, method = await self.search(query, top)
+        result: dict[str, object] = {"sections": found, "search": method, "confidence": "high"}
+        if method != "hybrid" or not found:
+            return result
+        scored = await self.similarities(query) or []
+        by_words = rank(self._sections, query)
+        doubts = assess(scored, by_words[0][1] if by_words else None, self._min_similarity)
+        if doubts:
+            alternatives = [str(item["section"]) for item in found]
+            if by_words and by_words[0][1].heading not in alternatives:
+                alternatives.append(by_words[0][1].heading)
+            result.update(confidence="low", doubts=doubts, alternatives=alternatives[:3])
+        return result
+
     async def by_meaning(self, query: str, top: int = 3) -> list[dict[str, str]] | None:
         """Только векторный поиск, без слов: для сравнения моделей. None — модель недоступна."""
         found = await self._by_meaning(query)
@@ -90,6 +115,8 @@ class KnowledgeIndex:
         """Все разделы с косинусом к вопросу, лучшие первыми, без порога. None — модели нет."""
         if self._embedder is None or not query.strip():
             return None
+        if self._last is not None and self._last[0] == query:
+            return self._last[1]
         try:
             vectors = await self._section_vectors(self._embedder)
             (wanted,) = await self._embedder.embed([query])
@@ -97,6 +124,7 @@ class KnowledgeIndex:
             return None
         scored = [(cosine(wanted, vector), section) for section, vector in zip(self._sections, vectors, strict=True)]
         scored.sort(key=lambda pair: -pair[0])
+        self._last = (query, scored)
         return scored
 
     async def _by_meaning(self, query: str) -> list[Section] | None:
@@ -127,6 +155,33 @@ class KnowledgeIndex:
             db.close()
         self._vectors = [known[text_hash] for text_hash in hashes]
         return self._vectors
+
+
+def assess(
+    scored: list[tuple[float, Section]],
+    word_top: Section | None,
+    min_similarity: float,
+    close_gap: float = CLOSE_GAP,
+    low_margin: float = LOW_MARGIN,
+) -> list[str]:
+    """Причины усомниться в первом разделе; пусто — поиск уверен.
+
+    scored — разделы по косинусу, лучшие первыми (KnowledgeIndex.similarities);
+    word_top — первый раздел поиска по словам.
+    """
+    above = [(similarity, section) for similarity, section in scored if similarity >= min_similarity]
+    if not above:
+        return []  # векторы молчат: отвечают слова или «ответа нет»
+    reasons = []
+    best, top = above[0]
+    if best < min_similarity + low_margin:
+        reasons.append("weak_match")
+    if len(above) > 1 and best - above[1][0] < close_gap and above[1][1].heading != top.heading:
+        reasons.append("close_alternative")
+    near = {section.heading for _, section in above[:2]}
+    if word_top is not None and word_top.heading not in near:
+        reasons.append("words_disagree")
+    return reasons
 
 
 def index_path() -> Path | None:

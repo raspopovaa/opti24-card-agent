@@ -21,12 +21,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from agent.knowledge import load_sections, search  # noqa: E402
-from agent.rag import KnowledgeIndex, embedder_from_env, index_path  # noqa: E402
+from agent.knowledge import load_sections, rank, search  # noqa: E402
+from agent.rag import KnowledgeIndex, assess, embedder_from_env, index_path  # noqa: E402
+from agent.rag.index import MIN_SIMILARITY  # noqa: E402
 
 CASE_FILES = ("retrieval_cases.jsonl", "colloquial_cases.jsonl")
 METHODS = ("слова", "смысл", "rrf", "векторы первыми")
 THRESHOLDS = (0.40, 0.45, 0.50, 0.52, 0.55, 0.60, 0.65, 0.70)
+GAPS = (0.0, 0.01, 0.02, 0.03, 0.05)  # CLOSE_GAP; LOW_MARGIN берётся таким же
 
 
 def load_cases() -> list[dict[str, object]]:
@@ -51,6 +53,8 @@ async def main() -> int:
     silent = dict.fromkeys(METHODS, 0)
     # Для таблицы порога: разделы по косинусу, первый раздел по словам и что считается верным.
     scored_cases: list[tuple[list[tuple[float, str]], str | None, set[object] | None]] = []
+    # Для таблицы уточнений: сходства с разделами, первый раздел по словам, верен ли ответ.
+    doubt_cases: list[tuple[list, object, bool]] = []
 
     for case in cases:
         question = str(case["q"])
@@ -67,6 +71,10 @@ async def main() -> int:
         scored = await index.similarities(question) or []
         word_top = found["слова"][0]["section"] if found["слова"] else None
         scored_cases.append(([(sim, sec.heading) for sim, sec in scored], word_top, accepted if expected else None))
+        ranked_words = rank(sections, question)
+        if expected:
+            first_top = first[0]["section"] if first else None
+            doubt_cases.append((scored, ranked_words[0][1] if ranked_words else None, first_top in accepted))
         tops = {method: (items[0]["section"] if items else None) for method, items in found.items()}
         correct = {method: (top in accepted if expected else top is None) for method, top in tops.items()}
         for method, ok in correct.items():
@@ -95,6 +103,16 @@ async def main() -> int:
             else:
                 right += top in accepted
         print(f"  {threshold:.2f}: верно {right}/{len(known)}, не по теме без ответа {quiet}/{unknown}")
+
+    wrong_total = sum(not ok for _, _, ok in doubt_cases)
+    print(f"\nУточнение при сомнении (порог {MIN_SIMILARITY}; ошибок «векторы первыми» {wrong_total}):")
+    for gap in GAPS:
+        caught = asked = 0
+        for scored, word_top, ok in doubt_cases:
+            if assess(scored, word_top, MIN_SIMILARITY, close_gap=gap, low_margin=gap):
+                caught += not ok
+                asked += ok
+        print(f"  зазор {gap:.2f}: ошибок переспрошено {caught}/{wrong_total}, верных переспрошено зря {asked}")
     return 0
 
 

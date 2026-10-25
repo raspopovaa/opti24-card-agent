@@ -226,7 +226,8 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         Args:
             question: Вопрос клиента или ключевые слова, например "вернуть аванс".
         """
-        found, method = await knowledge.search(question)
+        answer = await knowledge.answer(question)
+        found = answer.pop("sections")
         if not found:
             return _json(
                 {
@@ -234,7 +235,12 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                     "message": "В базе знаний ответа нет: направь к менеджеру по договору или на горячую линию.",
                 }
             )
-        return _json({"found": len(found), "search": method, "sections": found})
+        if answer.get("confidence") == "low":
+            answer["message"] = (
+                "Поиск не уверен в разделе: спроси клиента, о каком из alternatives вопрос, "
+                "и вызови lookup_knowledge снова с уточнённым вопросом."
+            )
+        return _json({"found": len(found), **answer, "sections": found})
 
     @beta_async_tool
     async def get_api_usage() -> str:

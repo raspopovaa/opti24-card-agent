@@ -4,9 +4,9 @@
 поиск — полный перебор по косинусу. Вектор раздела считается один раз и хранится
 по хешу текста и модели: изменённый раздел пересчитывается, остальные нет.
 
-Итог — слияние двух списков (reciprocal rank fusion): векторный поиск находит
-раздел по смыслу («отключи карту» → блокировка), поиск по основам слов — по
-точным терминам («УПД», «претензия»). Если модель эмбеддингов недоступна,
+Векторный поиск находит раздел по смыслу («отключи карту» → блокировка) и идёт
+первым; поиск по основам слов добавляет разделы с точными терминами («УПД»,
+«претензия»), которых векторы не нашли. Если модель эмбеддингов недоступна,
 остаётся поиск по основам слов, как раньше.
 
     lookup_knowledge ──► KnowledgeIndex.search ──► векторы (SQLite) + основы слов
@@ -26,7 +26,6 @@ from .embeddings import Embedder, cosine
 
 DEFAULT_PATH = Path("data/knowledge.db")
 MIN_SIMILARITY = 0.45  # ниже — раздел не по теме вопроса
-_RRF_K = 60
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS vectors (
@@ -59,14 +58,12 @@ class KnowledgeIndex:
         if by_meaning is None:
             return [as_result(section) for section in by_words[:top]], "words"
 
-        scores: dict[int, float] = {}
-        for ranked in (by_words, by_meaning):
-            for place, section in enumerate(ranked):
-                key = id(section)
-                scores[key] = scores.get(key, 0.0) + 1.0 / (_RRF_K + place + 1)
-        merged = {id(section): section for section in by_words + by_meaning}
-        best = sorted(merged, key=lambda key: -scores[key])[:top]
-        return [as_result(merged[key]) for key in best], "hybrid"
+        # Сначала векторы: на bge-m3 они верны в 6 из 8 вопросов сравнения, слова — в 3,
+        # а слияние рангов с равным весом — в 5 (ошибка слов тянула итог вниз). Слова
+        # добавляют разделы, которых векторы не нашли, и отвечают, если векторы пусты.
+        found = list(by_meaning)
+        found += [section for section in by_words if section not in found]
+        return [as_result(section) for section in found[:top]], "hybrid"
 
     async def by_meaning(self, query: str, top: int = 3) -> list[dict[str, str]] | None:
         """Только векторный поиск, без слов: для сравнения моделей. None — модель недоступна."""

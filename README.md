@@ -53,11 +53,21 @@ python -m agent.web   # http://localhost:8765, данные DEMO
 
 ### Примеры
 
-**Claude Haiku 5.5** (по умолчанию):
+**DeepSeek-V4-Flash в облаке Cloud.ru** (по умолчанию; российский провайдер, OpenAI-совместимый адрес
+`https://foundation-models.api.cloud.ru/v1`):
+
+```bash
+read -s "AGENT_API_KEY?Ключ Cloud.ru: " && export AGENT_API_KEY
+python -m agent
+```
+
+Другую модель Cloud.ru задайте через `AGENT_MODEL`, имя берите из каталога Foundation Models.
+
+**Claude Haiku 5.5**:
 
 ```bash
 read -s "ANTHROPIC_API_KEY?Ключ Anthropic: " && export ANTHROPIC_API_KEY
-python -m agent
+python -m agent --provider claude
 ```
 
 **Claude Sonnet 5.5**, если Haiku не справляется с вашими вопросами:
@@ -71,14 +81,6 @@ python -m agent --provider claude --model claude-sonnet-5-5
 ```bash
 read -s "DEEPSEEK_API_KEY?Ключ DeepSeek: " && export DEEPSEEK_API_KEY
 python -m agent --provider deepseek
-```
-
-**DeepSeek-V4-Flash в облаке Cloud.ru** (российский провайдер, OpenAI-совместимый адрес):
-
-```bash
-read -s "AGENT_API_KEY?Ключ Cloud.ru: " && export AGENT_API_KEY
-AGENT_PROVIDER=custom AGENT_BASE_URL=https://foundation-models.api.cloud.ru/v1 \
-  AGENT_MODEL=deepseek-ai/DeepSeek-V4-Flash python -m agent
 ```
 
 **YandexGPT** (Yandex AI Studio; имя модели собирается из ID каталога):
@@ -213,7 +215,7 @@ OPTI24_ENV_FILE=~/.opti24-production.env AGENT_CONTRACT_ID=<ID-договора>
 | Цель и правила | Системная инструкция | `agent/prompt.py` |
 | Руки | Инструменты: функции над SDK, по темам | `agent/tools/` |
 | Цикл | Tool Runner из SDK Anthropic | `agent/core.py` |
-| Мозг | Модель: Claude по умолчанию, другие провайдеры на выбор (раздел 7) | `agent/config.py`, `agent/providers.py` |
+| Мозг | Модель: DeepSeek-V4-Flash в Cloud.ru по умолчанию, другие провайдеры на выбор (раздел 7) | `agent/config.py`, `agent/providers.py` |
 | Предохранители | Подтверждение, бюджет запросов, журнал | `agent/safety.py` |
 | Расчёты | Обычный Python, без модели | `agent/analysis.py`, `agent/money.py` |
 | Проверка | Тесты и оценка поведения | `tests/`, `evals/` |
@@ -454,7 +456,7 @@ Haiku с кешем дешевле Opus без кеша примерно в 75 �
 
 ## 5. Безопасность
 
-- Ключи не в коде: ключ модели (`ANTHROPIC_API_KEY` или ключ другого провайдера,
+- Ключи не в коде: ключ модели (`AGENT_API_KEY` для Cloud.ru или ключ другого провайдера,
   раздел 7) из окружения, учётные данные Opti24 из
   `.env.demo` в папке проекта (или `~/.opti24-demo.env`). Файлы `.env*` в `.gitignore`.
 - В MCP-режиме (Claude Code) изменения подтверждает человек через MCP elicitation: сервер сам
@@ -531,6 +533,7 @@ Haiku с кешем дешевле Opus без кеша примерно в 75 �
 | Китай | Alibaba Qwen | `qwen` | `DASHSCOPE_API_KEY` | `qwen-plus` |
 | Китай | Moonshot Kimi | `kimi` | `MOONSHOT_API_KEY` | `kimi-k2-0905-preview` |
 | Китай | Zhipu GLM | `glm` | `ZHIPUAI_API_KEY` | `glm-4.6` |
+| Россия | Cloud.ru Foundation Models (по умолчанию) | `cloudru` | `AGENT_API_KEY` | `deepseek-ai/DeepSeek-V4-Flash` |
 | Россия | YandexGPT (Yandex AI Studio) | `yandex` | `YANDEX_API_KEY`, `YANDEX_FOLDER_ID` | `yandexgpt/latest` |
 | Россия | GigaChat (Сбер) | `gigachat` | ключ GigaChat в прокси gpt2giga | `GigaChat-2-Max` |
 | Любая | Любой OpenAI-совместимый API | `custom` | `AGENT_API_KEY`, `AGENT_BASE_URL`, `AGENT_MODEL` | нет, задаётся явно |
@@ -538,7 +541,8 @@ Haiku с кешем дешевле Opus без кеша примерно в 75 �
 | Локально | vLLM | `vllm` | ключ не нужен, `AGENT_MODEL` задаётся явно | нет, задаётся явно |
 
 ```
-python -m agent --provider claude                       # по умолчанию, Haiku 5.5
+python -m agent                                         # по умолчанию, DeepSeek-V4-Flash в Cloud.ru
+python -m agent --provider claude                       # Haiku 5.5, ANTHROPIC_API_KEY
 python -m agent --provider claude --model claude-sonnet-5-5
 python -m agent --provider openai                       # OPENAI_API_KEY
 python -m agent --provider deepseek                     # DEEPSEEK_API_KEY

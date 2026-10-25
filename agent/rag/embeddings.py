@@ -1,7 +1,8 @@
 """Эмбеддинги для поиска по базе знаний: OpenAI-совместимый API или локальный хеш.
 
     AGENT_EMBEDDING_MODEL      модель эмбеддингов; не задана — векторного поиска нет
-    AGENT_EMBEDDING_BASE_URL   адрес API, по умолчанию AGENT_BASE_URL (Cloud.ru и др.)
+    AGENT_EMBEDDING_BASE_URL   адрес API, по умолчанию AGENT_BASE_URL, а без него адрес Cloud.ru
+                               у провайдера по умолчанию
     AGENT_EMBEDDING_API_KEY    ключ, по умолчанию AGENT_API_KEY
 
 AGENT_EMBEDDING_MODEL=hash включает локальный хеш символьных триграмм: без сети и
@@ -16,6 +17,8 @@ import os
 import re
 from collections.abc import Sequence
 from typing import Any, Protocol
+
+from ..providers import DEFAULT_PROVIDER, PROVIDERS
 
 HASH_MODEL = "hash"
 HASH_DIM = 512
@@ -63,13 +66,23 @@ def embedder_from_env() -> Embedder | None:
         return None
     if model == HASH_MODEL:
         return HashEmbedder()
-    base_url = os.environ.get("AGENT_EMBEDDING_BASE_URL") or os.environ.get("AGENT_BASE_URL")
+    base_url = (
+        os.environ.get("AGENT_EMBEDDING_BASE_URL") or os.environ.get("AGENT_BASE_URL") or _provider_base_url()
+    )
     api_key = os.environ.get("AGENT_EMBEDDING_API_KEY") or os.environ.get("AGENT_API_KEY")
     if not base_url or not api_key:
         return None
     from openai import AsyncOpenAI
 
     return OpenAIEmbedder(AsyncOpenAI(api_key=api_key.strip(), base_url=base_url), model)
+
+
+def _provider_base_url() -> str:
+    """Адрес провайдера чата, если его ключ тоже лежит в AGENT_API_KEY (Cloud.ru)."""
+    provider = PROVIDERS.get(os.environ.get("AGENT_PROVIDER", DEFAULT_PROVIDER))
+    if provider is None or provider.key_env != "AGENT_API_KEY":
+        return ""
+    return provider.base_url
 
 
 def cosine(a: Sequence[float], b: Sequence[float]) -> float:

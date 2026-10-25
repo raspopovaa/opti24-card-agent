@@ -4,7 +4,7 @@
     python evals/run_evals.py                          # модель из AGENT_MODEL
     python evals/run_evals.py --runs 3                 # каждый кейс 3 раза
     python evals/run_evals.py --pause 6                # пауза между прогонами (бесплатные тарифы)
-    AGENT_MODEL=claude-sonnet-5-5 python evals/run_evals.py
+    AGENT_PROVIDER=claude AGENT_MODEL=claude-sonnet-5-5 python evals/run_evals.py
     AGENT_PROVIDER=deepseek python evals/run_evals.py  # ключ в DEEPSEEK_API_KEY
 
 Проверяется не текст ответа, а поведение: какие инструменты агент вызвал и с

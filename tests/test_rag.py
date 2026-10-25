@@ -172,6 +172,15 @@ def test_assess_flags_weak_match_and_disagreeing_words() -> None:
     assert assess([(0.40, block)], fee, 0.52) == []  # векторы молчат: решают слова
 
 
+def test_word_hit_stays_among_alternatives() -> None:
+    from agent.rag.index import pick_alternatives
+
+    assert pick_alternatives(["A", "B", "C"], "D") == ["A", "D", "B"]
+    assert pick_alternatives(["A", "B", "C"], "C") == ["A", "C", "B"]
+    assert pick_alternatives(["A", "B", "C"], "B") == ["A", "B", "C"]
+    assert pick_alternatives(["A"], None) == ["A"]
+
+
 def test_lookup_knowledge_tells_agent_to_ask(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from agent.tools import context
 

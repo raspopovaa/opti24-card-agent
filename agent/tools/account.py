@@ -9,7 +9,6 @@ from apisdkopti24 import APIError
 from apisdkopti24.errors import ContractSelectionError, RequestValidationError
 
 from ..config import Mode
-from ..knowledge import search as search_knowledge
 from ..money import rub, to_decimal
 from ..pricing import TERMS_EDITION, service_fee_for_volume
 from ..safety import BudgetExceededError
@@ -227,7 +226,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         Args:
             question: Вопрос клиента или ключевые слова, например "вернуть аванс".
         """
-        found = search_knowledge(knowledge, question)
+        found, method = await knowledge.search(question)
         if not found:
             return _json(
                 {
@@ -235,7 +234,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                     "message": "В базе знаний ответа нет: направь к менеджеру по договору или на горячую линию.",
                 }
             )
-        return _json({"found": len(found), "sections": found})
+        return _json({"found": len(found), "search": method, "sections": found})
 
     @beta_async_tool
     async def get_api_usage() -> str:

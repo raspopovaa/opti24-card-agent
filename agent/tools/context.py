@@ -8,18 +8,21 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 from apisdkopti24 import APIClient, APIError
 from apisdkopti24.errors import RequestValidationError
+from apisdkopti24.models.transactions import TransactionItemV2
 
 from ..config import Mode
+from ..db import OperationStore, open_store
 from ..knowledge import load_sections
 from ..money import to_decimal
+from ..rag import KnowledgeIndex, embedder_from_env, index_path
 from ..safety import ApprovalGate, BillingBudget
 from . import common
-from .catalog import IRREVERSIBLE_ACTIONS
 from .common import (
     DEFAULT_MONTHLY_QUOTA,
     MAX_LIST,
@@ -41,6 +44,7 @@ class ToolContext:
     monthly_quota: Any
     quota_payload: Any
     transactions: Any
+    transactions_source: Any
     dictionary: Any
     dictionary_label: Any
     product_label: Any
@@ -62,7 +66,9 @@ def make_context(
     budget: BillingBudget,
     gate: ApprovalGate,
     reports_dir: Path | None = None,
+    store: OperationStore | None | bool = True,
 ) -> ToolContext:
+    """store=True — база из AGENT_DB_PATH (см. agent.db.open_store), None/False — без базы."""
 
     reports_root = Path(
         reports_dir or os.environ.get("AGENT_REPORTS_DIR", "reports")
@@ -85,7 +91,7 @@ def make_context(
     # показывает больше 500 запросов, и без этой оговорки тарифные вызовы были бы закрыты.
     quota_configured = os.environ.get("OPTI24_MONTHLY_QUOTA") is not None
     # Выжимки договора маленькие и читаются один раз при старте, а не в асинхронном пути.
-    knowledge = load_sections()
+    knowledge = KnowledgeIndex(load_sections(), embedder_from_env(), index_path())
 
     def quota_payload(info: Any) -> dict[str, object]:
         """Расход месячного пакета; при известном размере бюджет сессии не больше остатка."""
@@ -118,12 +124,48 @@ def make_context(
     # Операции за период: (date_from, date_to, card_id) -> список. Живёт столько же,
     # сколько бюджет сессии, поэтому повторный вопрос о том же периоде бесплатен.
     tx_cache: dict[tuple[str, str, str | None], list[Any]] = {}
+    # Откуда взяты операции периода: из локальной базы (и на какой момент) или из API.
+    tx_source: dict[tuple[str, str, str | None], dict[str, str]] = {}
+    # Договор становится известен после входа в API, поэтому база открывается при первом вопросе.
+    opened: dict[str, OperationStore | None] = {} if store is True else {"store": store or None}
+
+    def operation_store() -> OperationStore | None:
+        if "store" not in opened:
+            contract_id = getattr(client, "contract_id", None)
+            if not contract_id:
+                return None
+            opened["store"] = open_store(contract_id)
+        return opened["store"]
 
     async def transactions(date_from: str, date_to: str, card_id: str | None) -> list[Any]:
         key = (date_from, date_to, card_id or None)
-        if key not in tx_cache:
-            tx_cache[key], _ = await load_transactions(client, budget, date_from, date_to, card_id)
-        return tx_cache[key]
+        if key in tx_cache:
+            return tx_cache[key]
+
+        now = datetime.now().replace(microsecond=0)
+        day_from, day_to = date.fromisoformat(date_from), date.fromisoformat(date_to)
+        operations = operation_store()
+        saved = operations.lookup(day_from, day_to, card_id, now) if operations else None
+        if saved is not None:
+            tx_cache[key] = [TransactionItemV2.model_validate(raw) for raw in saved.items]
+            tx_source[key] = {
+                "data_source": "локальная база",
+                "data_as_of": saved.loaded_at.isoformat(timespec="minutes"),
+            }
+            return tx_cache[key]
+
+        items, total = await load_transactions(client, budget, date_from, date_to, card_id)
+        tx_cache[key] = items
+        tx_source[key] = {"data_source": "API", "data_as_of": now.isoformat(timespec="minutes")}
+        # Неполную загрузку не сохраняем как период; сохраняем только модели SDK.
+        if operations and len(items) >= total and all(isinstance(i, TransactionItemV2) for i in items):
+            raw = [item.model_dump(mode="json", by_alias=True) for item in items]
+            operations.save(day_from, day_to, card_id, raw, now)
+        return items
+
+    def transactions_source(date_from: str, date_to: str, card_id: str | None) -> dict[str, str]:
+        """data_source и data_as_of для ответа инструмента; пусто, если период не загружали."""
+        return tx_source.get((date_from, date_to, card_id or None), {})
 
     # Справочники API бесплатны: каждый загружается один раз за сессию. Код и ID записи → название.
     dictionaries: dict[str, list[Any]] = {}
@@ -243,11 +285,7 @@ def make_context(
         return result
 
     async def confirm_write(action: str, summary: str, objects: int = 1) -> str | None:
-        """None — можно выполнять; строка — готовый отказ (read_only или declined).
-
-        Вопрос человеку задаётся только для необратимых действий (IRREVERSIBLE_ACTIONS); остальные
-        изменения выполняются сразу, но журнал их фиксирует. Режим read_only запрещает всё.
-        """
+        """None — можно выполнять; строка — готовый отказ (read_only или declined)."""
         if gate.mode is Mode.READ_ONLY:
             gate._audit(action, objects, False)
             return _json(
@@ -258,9 +296,6 @@ def make_context(
                     "Так и скажи пользователю; включить изменение можно запуском с AGENT_MODE=confirm.",
                 }
             )
-        if action not in IRREVERSIBLE_ACTIONS:
-            gate.record_without_asking(action, objects)
-            return None
         if not await gate.approve(action, summary, objects):
             return _json(
                 {"status": "declined", "message": "Пользователь не подтвердил действие: данные не тронуты."}
@@ -276,6 +311,7 @@ def make_context(
         monthly_quota=monthly_quota,
         quota_payload=quota_payload,
         transactions=transactions,
+        transactions_source=transactions_source,
         dictionary=dictionary,
         dictionary_label=dictionary_label,
         product_label=product_label,

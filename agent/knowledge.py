@@ -106,8 +106,8 @@ def load_sections(directory: Path | None = None) -> list[Section]:
     return sections
 
 
-def search(sections: list[Section], query: str, top: int = 3) -> list[dict[str, str]]:
-    """Лучшие разделы по вопросу; пустой список — в базе знаний ответа нет."""
+def rank(sections: list[Section], query: str) -> list[tuple[int, Section]]:
+    """Разделы с очками по основам слов, лучшие первыми; ниже MIN_SCORE не попадают."""
     wanted = _stems(query)
     for stem in list(wanted):
         for synonym in SYNONYMS.get(stem, ()):
@@ -121,12 +121,18 @@ def search(sections: list[Section], query: str, top: int = 3) -> list[dict[str, 
         if score >= MIN_SCORE and (len(matched) >= 2 or len(wanted) == 1):
             scored.append((score, section))
     scored.sort(key=lambda pair: -pair[0])
-    return [
-        {
-            "source": section.source or f"docs/knowledge/{section.file}",
-            "section": section.heading,
-            "edition": section.edition,
-            "text": section.text[:MAX_SECTION_CHARS],
-        }
-        for _, section in scored[:top]
-    ]
+    return scored
+
+
+def as_result(section: Section) -> dict[str, str]:
+    return {
+        "source": section.source or f"docs/knowledge/{section.file}",
+        "section": section.heading,
+        "edition": section.edition,
+        "text": section.text[:MAX_SECTION_CHARS],
+    }
+
+
+def search(sections: list[Section], query: str, top: int = 3) -> list[dict[str, str]]:
+    """Лучшие разделы по вопросу; пустой список — в базе знаний ответа нет."""
+    return [as_result(section) for _, section in rank(sections, query)[:top]]

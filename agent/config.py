@@ -1,9 +1,9 @@
 """Настройки агента: модель, режим работы и бюджеты.
 
 Всё, что меняется между запусками, читается из переменных окружения, а не
-зашивается в код. Секреты (ключи API) здесь не хранятся: ключ Anthropic SDK
-берёт сам из ANTHROPIC_API_KEY, а учётные данные Opti24 — apisdkopti24 из
-своего .env-файла.
+зашивается в код. Секреты (ключи API) здесь не хранятся: ключ модели читается
+из переменной провайдера (по умолчанию AGENT_API_KEY для Cloud.ru), а учётные
+данные Opti24 — apisdkopti24 из своего .env-файла.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from .providers import get_provider
+from .providers import DEFAULT_PROVIDER, get_provider
 
 
 def _int_env(name: str, default: int) -> int:
@@ -63,7 +63,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
-        provider_name = os.environ.get("AGENT_PROVIDER", "claude")
+        provider_name = os.environ.get("AGENT_PROVIDER", DEFAULT_PROVIDER)
         provider = get_provider(provider_name)
         # Самая дешёвая модель провайдера по умолчанию; поднимать, только если
         # оценка (evals/) покажет ошибки в выборе инструментов.

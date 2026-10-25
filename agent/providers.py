@@ -11,6 +11,9 @@ Claude, отдают OpenAI-совместимый интерфейс, поэт�
 ниже — стартовые; актуальное имя берите в документации провайдера и задавайте
 переменной ``AGENT_MODEL``. Адрес можно переопределить через ``AGENT_BASE_URL``.
 
+По умолчанию агент работает на DeepSeek-V4-Flash в Cloud.ru Foundation Models
+(``cloudru``): российский облачный провайдер, ключ в ``AGENT_API_KEY``.
+
 Важно про данные: запросы уходят на серверы провайдера. На DEMO это безопасно.
 С рабочим договором (номера карт, водители, суммы) учтите требования закона
 о персональных данных и политику вашей компании, либо используйте локальную
@@ -20,6 +23,8 @@ Claude, отдают OpenAI-совместимый интерфейс, поэт�
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+DEFAULT_PROVIDER = "cloudru"
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +63,14 @@ PROVIDERS: dict[str, Provider] = {
         "openai", "glm-4.6", "ZHIPUAI_API_KEY", "https://open.bigmodel.cn/api/paas/v4", "Zhipu GLM"
     ),
     # Россия
+    # По умолчанию: DeepSeek-V4-Flash в Cloud.ru Foundation Models, ключ Cloud.ru в AGENT_API_KEY.
+    "cloudru": Provider(
+        "openai",
+        "deepseek-ai/DeepSeek-V4-Flash",
+        "AGENT_API_KEY",
+        "https://foundation-models.api.cloud.ru/v1",
+        "Cloud.ru Foundation Models",
+    ),
     "yandex": Provider(
         "openai",
         "yandexgpt/latest",

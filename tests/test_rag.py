@@ -12,6 +12,7 @@ import pytest
 from agent.config import Mode
 from agent.knowledge import Section, load_sections
 from agent.rag import HashEmbedder, KnowledgeIndex, assess, embedder_from_env
+from agent.rag.embeddings import OpenAIEmbedder
 from agent.rag.index import pick_alternatives
 from tests.test_agent import make_tools
 from tests.test_knowledge import QUESTIONS
@@ -133,6 +134,19 @@ def test_embedder_is_off_unless_model_is_set(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("AGENT_EMBEDDING_MODEL", "syn-embedding-model")
     embedder = embedder_from_env()
     assert embedder is not None and embedder.model == "syn-embedding-model"
+
+
+def test_embedder_uses_cloudru_address_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("AGENT_PROVIDER", "AGENT_BASE_URL", "AGENT_EMBEDDING_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AGENT_API_KEY", "syn-key")
+    monkeypatch.setenv("AGENT_EMBEDDING_MODEL", "syn-embedding-model")
+    embedder = embedder_from_env()
+    assert isinstance(embedder, OpenAIEmbedder)
+    assert str(embedder._client.base_url).startswith("https://foundation-models.api.cloud.ru/v1")
+
+    monkeypatch.setenv("AGENT_PROVIDER", "deepseek")
+    assert embedder_from_env() is None
 
 
 def test_lookup_knowledge_says_how_it_searched(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

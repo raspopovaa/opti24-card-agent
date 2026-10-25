@@ -927,10 +927,30 @@ def test_providers_and_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     assert Settings.from_env().api_key == "ollama"
 
 
+def test_cloudru_deepseek_is_the_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent.config import Settings
+    from agent.core import make_llm
+
+    for name in ("AGENT_PROVIDER", "AGENT_MODEL", "AGENT_BASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AGENT_API_KEY", "k")
+    s = Settings.from_env()
+    assert (s.provider, s.model, s.base_url, s.api_key) == (
+        "cloudru",
+        "deepseek-ai/DeepSeek-V4-Flash",
+        "https://foundation-models.api.cloud.ru/v1",
+        "k",
+    )
+    assert str(make_llm(s).base_url).startswith("https://foundation-models.api.cloud.ru/v1")
+    monkeypatch.delenv("AGENT_API_KEY")
+    with pytest.raises(RuntimeError, match="AGENT_API_KEY"):
+        make_llm(Settings.from_env())
+
+
 def test_us_chinese_and_russian_providers_are_available() -> None:
     from agent.providers import PROVIDERS
 
-    assert {"claude", "openai", "deepseek", "qwen", "yandex", "gigachat", "vllm", "custom"} <= set(PROVIDERS)
+    assert {"claude", "openai", "deepseek", "qwen", "cloudru", "yandex", "gigachat", "vllm", "custom"} <= set(PROVIDERS)
 
 
 def test_yandex_model_uri_and_project_come_from_folder(monkeypatch: pytest.MonkeyPatch) -> None:

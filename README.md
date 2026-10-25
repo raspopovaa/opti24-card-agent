@@ -19,7 +19,7 @@
 python -m agent.dashboard    # только дашборд договора, без модели и без ключей ИИ
 python -m agent              # дашборд + диалог в терминале
 python scripts/smoke_test.py # проверка на настоящем API (DEMO), без модели
-pytest                       # 397 тестов без сети и без ключей
+pytest                       # 398 тестов без сети и без ключей
 ruff check agent scripts evals tests && mypy agent  # проверки качества кода, их же запускает CI
 python scripts/estimate_cost.py
 python evals/run_retrieval.py   # качество поиска по базе знаний: hit@3 и «ответа нет», без модели

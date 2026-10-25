@@ -9,8 +9,8 @@ from apisdkopti24 import APIError
 from apisdkopti24.errors import RequestValidationError
 
 from ..config import Mode
-from ..safety import BudgetExceededError
-from .common import MAX_LIST, _error, _iso, _json, _rub_optional
+from ..safety import BudgetExceededError, mask_card_number
+from .common import MAX_LIST, _error, _iso, _json, _rub_optional, describe_card
 from .context import ToolContext
 
 
@@ -21,6 +21,9 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     gate = ctx.gate
     limits_payload = ctx.limits_payload
     confirm_write = ctx.confirm_write
+    perform = ctx.perform
+    finish = ctx.finish
+    cards_by_id = ctx.cards_by_id
     default_group_id = ctx.default_group_id
 
     @beta_async_tool
@@ -157,9 +160,8 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     async def block_cards(card_ids: list[str], reason: str, block: bool = True) -> str:
         """Заблокировать или разблокировать карты. ИЗМЕНЯЕТ ДАННЫЕ, нужно подтверждение.
 
-        Вызывай только по прямой просьбе пользователя и по конкретным картам.
-        block=True блокирует, block=False разблокирует; разблокировка — отдельное
-        решение человека.
+        Только по прямой просьбе пользователя и по конкретным картам;
+        разблокировка — отдельное решение человека.
 
         Args:
             card_ids: ID карт (из list_cards), не больше 10.
@@ -172,35 +174,39 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         action = "block_cards" if block else "unblock_cards"
         verb = "Заблокировать" if block else "Разблокировать"
         if gate.mode is Mode.READ_ONLY:
-            gate._audit(action, len(card_ids), False)
+            _, denied = await confirm_write(action, "", len(card_ids), {"card_ids": card_ids})
+            return denied
+        # Человек подтверждает карты, которые показал API, а не ID, которые назвала модель.
+        cards = await cards_by_id(card_ids)
+        missing = [card_id for card_id in card_ids if card_id not in cards]
+        if missing:
             return _json(
                 {
-                    "status": "not_allowed",
-                    "message": "Агент запущен в режиме только чтения (AGENT_MODE=read_only): "
-                    "изменение отключено настройкой, карты НЕ тронуты, оператор запрос не получал. "
-                    "Так и скажи пользователю; включить изменение можно запуском с AGENT_MODE=confirm.",
+                    "error": "not_found",
+                    "message": f"Карт с ID {', '.join(missing)} нет в списке карт договора: ничего не изменено. "
+                    "Найди карты через list_cards и не угадывай ID.",
                 }
             )
-        approved = await gate.approve(
+        lines = "\n".join(f"- {describe_card(cards[card_id])}" for card_id in card_ids)
+        approval, denied = await confirm_write(
             action,
-            # Человек видит, какие именно карты меняются; в журнал ID не попадают.
-            f"{verb} карт: {len(card_ids)} ({', '.join(card_ids)}). Причина: {reason}",
+            f"{verb} карты ({len(card_ids)}):\n{lines}\nПричина со слов агента: {reason}",
             len(card_ids),
+            {"card_ids": card_ids, "cards": [mask_card_number(cards[c].number) for c in card_ids]},
+            {"card_ids": card_ids, "block": block},
         )
-        if not approved:
-            return _json(
-                {
-                    "status": "declined",
-                    "message": "Пользователь не подтвердил действие: карты не тронуты.",
-                }
-            )
-        try:
-            budget.spend()
-            response = await client.cards.block_card(card_ids=card_ids, block=block)
-        except (APIError, BudgetExceededError, RequestValidationError) as exc:
-            return _error(exc)
+        if denied:
+            return denied
+        response, failed = await perform(
+            approval,
+            lambda: client.cards.block_card(card_ids=card_ids, block=block),
+            "статус карт в list_cards",
+        )
+        if failed:
+            return failed
         done = [str(item) for item in (response.data or [])]
         not_done = [card_id for card_id in card_ids if card_id not in done]
+        finish(approval, "partial" if not_done else "done", {"done": done, "not_done": not_done})
         return _json(
             {
                 "status": "partial" if not_done else ("blocked" if block else "unblocked"),
@@ -224,17 +230,34 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             return _json(
                 {"error": "bad_request", "message": "Комментарий должен быть от 1 до 90 символов."}
             )
-        denied = await confirm_write(
-            "set_card_comment",
-            f"Установить комментарий «{comment}» карте {card_id}?",
+        target: dict[str, object] = {"card_id": card_id}
+        summary = ""
+        if gate.mode is not Mode.READ_ONLY:
+            card = (await cards_by_id([card_id])).get(card_id)
+            if card is None:
+                return _json(
+                    {
+                        "error": "not_found",
+                        "message": f"Карты с ID {card_id} нет в списке карт договора: ничего не изменено. "
+                        "Найди карту через list_cards.",
+                    }
+                )
+            target["card"] = mask_card_number(card.number)
+            was = f"«{card.comment}»" if card.comment else "пусто"
+            summary = f"Изменить комментарий карты {card.number} (ID {card_id}): было {was}, станет «{comment}»."
+        approval, denied = await confirm_write(
+            "set_card_comment", summary, 1, target, {"card_id": card_id, "comment": comment}
         )
         if denied:
             return denied
-        try:
-            budget.spend()
-            response = await client.cards.set_card_comment(card_id=card_id, comment=comment)
-        except (APIError, BudgetExceededError, RequestValidationError) as exc:
-            return _error(exc)
+        response, failed = await perform(
+            approval,
+            lambda: client.cards.set_card_comment(card_id=card_id, comment=comment),
+            "комментарий карты в list_cards",
+        )
+        if failed:
+            return failed
+        finish(approval, "done" if response.data else "not_done")
         return _json(
             {
                 "status": "updated",

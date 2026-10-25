@@ -67,8 +67,9 @@ def load_store_sections(store_dir: Path | None = None) -> list[Section]:
     from .ingest import Store
 
     store = Store(store_dir)
-    # Агент работает от имени клиента: внутренние документы он отдаёт, только если оператор включил это явно.
-    allow = ("public", "internal") if os.environ.get("OPTI24_KNOWLEDGE_INTERNAL", "1") == "1" else ("public",)
+    # Агент работает от имени клиента: внутренние документы он отдаёт, только если оператор включил это явно
+    # (OPTI24_KNOWLEDGE_INTERNAL=1). По умолчанию — только документы с грифом public.
+    allow = ("public", "internal") if os.environ.get("OPTI24_KNOWLEDGE_INTERNAL", "0") == "1" else ("public",)
     return [
         Section(
             file=doc.id,

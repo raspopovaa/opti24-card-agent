@@ -53,6 +53,46 @@ def limit_left(part: Any) -> str | None:
     return str(to_decimal(values["value"]) - to_decimal(values["used"]))
 
 
+def describe_card(card: Any) -> str:
+    """Карта для окна подтверждения: номер, ID, комментарий, статус и группа — из ответа API."""
+    parts = [f"{card.number} (ID {card.id})"]
+    if getattr(card, "comment", None):
+        parts.append(f"«{card.comment}»")
+    status = getattr(card, "status_name", None) or getattr(card, "status", None)
+    if status:
+        parts.append(f"сейчас: {status}")
+    if getattr(card, "group_name", None):
+        parts.append(f"группа {card.group_name}")
+    return ", ".join(parts)
+
+
+# Коды периода лимита, значение которых подтверждено; остальные показываются кодом.
+PERIOD_WORDS = {3: "сутки", 7: "неделя"}
+
+
+def period_words(number: object, period_type: object) -> str:
+    """Период лимита словами: «сутки», «2 × неделя»; неизвестный код показывается как есть."""
+    try:
+        name = PERIOD_WORDS.get(int(str(period_type)))
+    except ValueError:
+        name = None
+    unit = name or f"период с кодом {period_type} (значение кода уточните в личном кабинете)"
+    return unit if str(number) == "1" else f"{number} × {unit}"
+
+
+def describe_limit(item: Any) -> str:
+    """Продуктовый лимит словами: размер, израсходовано и период."""
+    sizes = []
+    for part, unit in ((getattr(item, "amount", None), "л"), (getattr(item, "sum", None), "₽")):
+        if part is not None and getattr(part, "value", None) is not None:
+            used = getattr(part, "used", None)
+            sizes.append(f"{part.value} {unit}" + (f" (израсходовано {used})" if used is not None else ""))
+    time = getattr(item, "time", None)
+    period = period_words(time.number, time.type) if time is not None else "период не указан"
+    product = getattr(item, "productType", None) or getattr(item, "productGroup", None) or "все продукты"
+    return f"лимит {item.id}: {', '.join(sizes) or 'размер не указан'} на {period}, продукт {product}"
+
+
 def mask_email(email: str | None) -> str | None:
     """Почта для модели без лишних личных данных: «iv***@example.ru»."""
     if not email or "@" not in email:

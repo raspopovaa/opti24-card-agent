@@ -311,7 +311,7 @@
 - `get_limits` → `data.result.amount.used` — Использованное значение лимита
 - `get_limits` → `data.result.sum.value` — Сумма лимита
 - `get_limits` → `data.result.sum.used` — Использованный объём лимита
-- `get_limits` → `data.result.time.type` — Тип периода (например, 7 — неделя)
+- `get_limits` → `data.result.time.type` — Тип периода (например, 7: неделя)
 - `get_region_limits` → `data.result.region` — Код регион обслуживания
 - `get_region_limits` → `data.result.limit_type` — Тип лимита
 - `get_restrictions` → `data.result.productTypeName` — Название типа продукта
@@ -398,10 +398,10 @@
 Инструменты и методы SDK:
 
 - `get_access_rules` → `get_limits` (бесплатный), `get_region_limits` (тарифицируемый), `get_restrictions` (тарифицируемый), `get_dictionary` (бесплатный)
-- `set_limit` → `set_limit` (тарифицируемый)
+- `set_limit` → `get_limits` (бесплатный), `set_limit` (тарифицируемый)
 - `set_region_limit` → `set_region_limit` (тарифицируемый)
 - `set_restriction` → `set_restriction` (тарифицируемый, только рабочий API)
-- `remove_limit` → `remove_limit` (тарифицируемый)
+- `remove_limit` → `get_limits` (бесплатный), `remove_limit` (тарифицируемый)
 - `remove_region_limit` → `remove_region_limit` (тарифицируемый)
 - `remove_restriction` → `remove_restriction` (тарифицируемый)
 

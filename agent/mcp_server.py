@@ -74,7 +74,9 @@ async def _get_client() -> APIClient:
 
 def _register() -> None:
     budget = BillingBudget(limit=settings.max_billable_calls)
-    gate = ApprovalGate(mode=settings.mode, ask=_ask_human_via_client, audit_log=settings.audit_log)
+    gate = ApprovalGate(
+        mode=settings.mode, ask=_ask_human_via_client, audit_log=settings.audit_log, channel="mcp_elicitation"
+    )
     proxy = _ClientProxy()
     for tool in build_tools(proxy, budget, gate):  # type: ignore[arg-type]
         server.tool(name=tool.name)(tool.func)  # описание берётся из docstring

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from apisdkopti24 import APIClient, APIError
-from apisdkopti24.errors import RequestValidationError
+from apisdkopti24.errors import RequestValidationError, ServerError
 from apisdkopti24.models.transactions import TransactionItemV2
 
 from ..config import Mode
@@ -21,17 +21,23 @@ from ..db import OperationStore, open_store
 from ..knowledge import load_sections
 from ..money import to_decimal
 from ..rag import KnowledgeIndex, embedder_from_env, index_path
-from ..safety import ApprovalGate, BillingBudget
+from ..safety import Approval, ApprovalGate, BillingBudget, BudgetExceededError, mask_card_number
 from . import common
 from .common import (
     DEFAULT_MONTHLY_QUOTA,
     MAX_LIST,
     QUOTA_WARNING_LEFT,
+    _error,
     _json,
+    describe_card,
     limit_left,
     load_transactions,
     percent,
 )
+
+# Поиск карты по ID для подтверждения: страниц бесплатного списка карт и карт на странице.
+CARD_LOOKUP_PAGES = 20
+CARD_LOOKUP_PAGE_SIZE = 100
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +61,11 @@ class ToolContext:
     purchase_check: Any
     limits_payload: Any
     confirm_write: Any
+    perform: Any
+    finish: Any
+    cards_by_id: Any
+    target_line: Any
+    rules_seen: Any
     # Значения по умолчанию договора (переменные окружения) и почта пользователя из профиля.
     default_product: str | None
     default_group_id: str | None
@@ -284,11 +295,17 @@ def make_context(
             )
         return result
 
-    async def confirm_write(action: str, summary: str, objects: int = 1) -> str | None:
-        """None — можно выполнять; строка — готовый отказ (read_only или declined)."""
+    async def confirm_write(
+        action: str,
+        summary: str,
+        objects: int = 1,
+        target: dict[str, object] | None = None,
+        args: dict[str, object] | None = None,
+    ) -> tuple[Approval | None, str | None]:
+        """(решение, None) — можно выполнять; (None, строка) — готовый отказ модели."""
         if gate.mode is Mode.READ_ONLY:
-            gate._audit(action, objects, False)
-            return _json(
+            gate.deny(action, objects, target=target, args=args)
+            return None, _json(
                 {
                     "status": "not_allowed",
                     "message": "Агент запущен в режиме только чтения (AGENT_MODE=read_only): "
@@ -296,11 +313,104 @@ def make_context(
                     "Так и скажи пользователю; включить изменение можно запуском с AGENT_MODE=confirm.",
                 }
             )
-        if not await gate.approve(action, summary, objects):
-            return _json(
+        if budget.left < 1:  # не спрашиваем человека о том, что выполнить уже нельзя
+            return None, _json(
+                {
+                    "error": "BudgetExceededError",
+                    "message": f"Исчерпан бюджет тарифицируемых запросов на сессию ({budget.limit}): "
+                    "изменение не выполнено. Предложи продолжить в новой сессии.",
+                }
+            )
+        approval = await gate.approve(action, summary, objects, target=target, args=args)
+        if not approval:
+            return None, _json(
                 {"status": "declined", "message": "Пользователь не подтвердил действие: данные не тронуты."}
             )
-        return None
+        return approval, None
+
+    async def perform(approval: Approval, call: Any, check: str) -> tuple[Any, str | None]:
+        """Выполняет подтверждённое изменение: (ответ API, None) или (None, ответ модели об ошибке).
+
+        Отказ API до выполнения (4xx, проверка запроса) — изменение не выполнено. Таймаут, обрыв
+        связи, ошибка сервера или непонятный ответ — исход неизвестен: оператор мог уже применить
+        изменение, и повтор создал бы второе правило. ``check`` — чем проверить текущее состояние.
+        """
+        try:
+            budget.spend()
+        except BudgetExceededError as exc:
+            gate.outcome(approval, "not_sent", {"error": type(exc).__name__})
+            return None, _error(exc)
+        try:
+            response = await call()
+        except RequestValidationError as exc:
+            gate.outcome(approval, "not_sent", {"error": type(exc).__name__})
+            return None, _error(exc)
+        except APIError as exc:
+            if not isinstance(exc, ServerError):
+                gate.outcome(approval, "error", {"error": type(exc).__name__, "http": exc.http_status_code})
+                return None, _error(exc)
+            failure: Exception = exc
+        except Exception as exc:  # noqa: BLE001 — исход неизвестен при любой другой ошибке
+            failure = exc
+        else:
+            return response, None
+        gate.outcome(approval, "unknown", {"error": type(failure).__name__})
+        return None, _json(
+            {
+                "status": "unknown",
+                "error": type(failure).__name__,
+                "message": "Ответ оператора не получен: изменение могло выполниться. НЕ вызывай инструмент "
+                f"повторно. Скажи пользователю, что результат неизвестен, и предложи проверить: {check}.",
+            }
+        )
+
+    def finish(approval: Approval, status: str, detail: dict[str, object] | None = None) -> None:
+        """Исход подтверждённого изменения в журнал аудита."""
+        gate.outcome(approval, status, detail)
+
+    async def cards_by_id(card_ids: list[str]) -> dict[str, Any]:
+        """Карты договора по ID из бесплатного списка карт; ненайденных в ответе нет.
+
+        API не ищет карту по ID, поэтому список читается страницами, пока не найдутся все.
+        """
+        wanted = set(card_ids)
+        found: dict[str, Any] = {}
+        seen = 0
+        for page in range(1, CARD_LOOKUP_PAGES + 1):
+            try:
+                response = await client.cards.get_cards_v2(page=page, onpage=CARD_LOOKUP_PAGE_SIZE)
+            except (APIError, RequestValidationError):
+                break
+            batch = response.data.result or []
+            seen += len(batch)
+            found.update({str(c.id): c for c in batch if str(c.id) in wanted})
+            if wanted <= found.keys() or not batch or seen >= (response.data.total_count or 0):
+                break
+        return found
+
+    async def group_name(group_id: str) -> str | None:
+        """Название группы карт из бесплатного списка групп; None, если группы нет."""
+        try:
+            groups = (await client.card_groups.get_card_groups()).data.result or []
+        except (APIError, RequestValidationError):
+            return None
+        return next((g.name for g in groups if str(g.id) == group_id), None)
+
+    async def target_line(card_id: str | None, group_id: str | None) -> tuple[str | None, dict[str, object]]:
+        """Цель изменения словами из API и её запись для журнала; (None, …) — карта или группа не найдена."""
+        if card_id:
+            card = (await cards_by_id([card_id])).get(card_id)
+            if card is None:
+                return None, {"card_id": card_id}
+            return f"карта {describe_card(card)}", {"card_id": card_id, "card": mask_card_number(card.number)}
+        assert group_id
+        name = await group_name(group_id)
+        if name is None:
+            return None, {"group_id": group_id}
+        return f"группа «{name}» (ID {group_id})", {"group_id": group_id}
+
+    # Правила из последнего get_access_rules: по ним подтверждение показывает, что меняется или удаляется.
+    rules_seen: dict[str, dict[str, object]] = {}
 
     return ToolContext(
         client=client,
@@ -322,6 +432,11 @@ def make_context(
         purchase_check=purchase_check,
         limits_payload=limits_payload,
         confirm_write=confirm_write,
+        perform=perform,
+        finish=finish,
+        cards_by_id=cards_by_id,
+        target_line=target_line,
+        rules_seen=rules_seen,
         default_product=default_product,
         default_group_id=default_group_id,
         profile_email=profile_email,

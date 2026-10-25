@@ -18,8 +18,9 @@ from apisdkopti24.models.limits import (
 from apisdkopti24.models.region_limits import RegionLimitRequestItem
 from apisdkopti24.models.restrictions import RestrictionRequestItem
 
+from ..config import Mode
 from ..safety import BudgetExceededError
-from .common import MAX_LIST, _error, _json
+from .common import MAX_LIST, _error, _json, describe_limit, period_words
 from .context import ToolContext
 
 
@@ -29,13 +30,84 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     budget = ctx.budget
     limits_payload = ctx.limits_payload
     confirm_write = ctx.confirm_write
+    perform = ctx.perform
+    finish = ctx.finish
+    target_line = ctx.target_line
+    rules_seen = ctx.rules_seen
     default_group_id = ctx.default_group_id
+
+    def rule_text(kind: str, item: Any) -> str:
+        """Региональный лимит или ограничитель словами — для подтверждения изменения."""
+        whom = f"карты {item.card_id}" if item.card_id else f"группы {item.group_id}"
+        if kind == "region":
+            verb = "разрешён" if item.limit_type == 1 else "запрещён"
+            place = "/".join(str(x) for x in (item.country, item.region) if x) or "регион не указан"
+            station = f", АЗС {item.service_center}" if item.service_center else ""
+            return f"региональный лимит {item.id}: {place}{station} {verb} для {whom}"
+        verb = "разрешён" if item.restriction_type == 1 else "запрещён"
+        product = item.productTypeName or item.productType or item.productGroupName or item.productGroup
+        return f"товарный ограничитель {item.id}: продукт {product} {verb} для {whom}"
+
+    def seen_for(kind: str, card_id: str | None, group_id: str | None) -> list[str]:
+        return [
+            str(rule["text"])
+            for rule in rules_seen.values()
+            if rule["kind"] == kind and (rule["card_id"], rule["group_id"]) == (card_id, group_id)
+        ]
+
+    def current_rules(kind: str, card_id: str | None, group_id: str | None) -> str:
+        if not any(rule["kind"] == kind for rule in rules_seen.values()):
+            return "Текущие правила этого вида не загружены: get_access_rules в этой сессии не вызывался."
+        found = seen_for(kind, card_id, group_id)
+        return "Текущие правила цели: " + ("; ".join(found) if found else "нет") + "."
+
+    def read_only() -> bool:
+        return ctx.gate.mode is Mode.READ_ONLY
+
+    def not_found(card_id: str | None, group_id: str | None) -> str:
+        what = f"Карты с ID {card_id}" if card_id else f"Группы с ID {group_id}"
+        return _json(
+            {
+                "error": "not_found",
+                "message": f"{what} нет в договоре: ничего не изменено. Найди её через list_cards "
+                "или list_card_groups и не угадывай ID.",
+            }
+        )
 
     def with_default_group(card_id: str | None, group_id: str | None) -> tuple[str | None, dict[str, str]]:
         """Группа по умолчанию, если не указаны ни карта, ни группа (только для чтения правил)."""
         if card_id or group_id or not default_group_id:
             return group_id, {}
         return default_group_id, {"group_id": f"{default_group_id} (OPTI24_DEFAULT_GROUP_ID)"}
+
+    def old_owner(item: Any) -> str:
+        return f"карта {item.card_id}" if item.card_id else (f"группа {item.group_id}" if item.group_id else "договор")
+
+    async def rule_change_summary(
+        kind: str, rule_id: str | None, card_id: str | None, group_id: str | None, change: str
+    ) -> tuple[str, dict[str, object], str | None]:
+        """Текст подтверждения правила, запись цели для журнала и готовый отказ, если цель неизвестна."""
+        audit_target: dict[str, object] = {"card_id": card_id} if card_id else {"group_id": group_id}
+        if rule_id:
+            audit_target["rule_id"] = rule_id
+        if read_only():
+            return "", audit_target, None
+        whom, found_target = await target_line(card_id, group_id)
+        if whom is None:
+            return "", audit_target, not_found(card_id, group_id)
+        audit_target = {**found_target, **({"rule_id": rule_id} if rule_id else {})}
+        if rule_id:
+            old = rules_seen.get(f"{kind}:{rule_id}")
+            if old is None:
+                return "", audit_target, _json(
+                    {
+                        "error": "unknown_rule",
+                        "message": f"Правила {rule_id} нет в ответах get_access_rules этой сессии: ничего не "
+                        "изменено. Сначала вызови get_access_rules по этой карте или группе.",
+                    }
+                )
+            return f"Изменить правило: {whom}.\nБыло: {old['text']}.\nСтанет: {change}.", audit_target, None
+        return f"{change}: {whom}.\n{current_rules(kind, card_id, group_id)}", audit_target, None
 
     @beta_async_tool
     async def get_limits(card_id: str | None = None, group_id: str | None = None) -> str:
@@ -126,6 +198,17 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             }
             for item in (restrictions_response.data.result or [])[:MAX_LIST]
         ]
+        for kind, items in (
+            ("region", regions_response.data.result or []),
+            ("restriction", restrictions_response.data.result or []),
+        ):
+            for item in items:
+                rules_seen[f"{kind}:{item.id}"] = {
+                    "kind": kind,
+                    "card_id": item.card_id,
+                    "group_id": item.group_id,
+                    "text": rule_text(kind, item),
+                }
         limits = await limits_payload(limits_response.data.result or [])
         return _json(
             {
@@ -154,9 +237,8 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     ) -> str:
         """Установить или изменить продуктовый лимит. ИЗМЕНЯЕТ ДАННЫЕ, по тарифу.
 
-        Нужно указать ровно одну цель (card_id или group_id), хотя бы один размер
-        (liters и/или rubles) и период. period_type: 3 — сутки, 7 — неделя, другие
-        коды уточняй по get_limits. limit_id меняет существующий лимит.
+        Одна цель (card_id или group_id), liters и/или rubles, период. period_type:
+        3 — сутки, 7 — неделя, другие коды — по get_limits. limit_id меняет лимит.
         """
         card_id = (card_id or "").strip() or None
         group_id = (group_id or "").strip() or None
@@ -209,7 +291,6 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             )
         except Exception as exc:  # noqa: BLE001 — ошибку модели показываем как есть
             return _json({"error": "bad_request", "message": str(exc)[:300]})
-        target = f"карте {card_id}" if card_id else f"группе {group_id}"
         sizes = ", ".join(
             part
             for part in (
@@ -218,21 +299,51 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             )
             if part
         )
-        product = f" (продукт {product_type})" if product_type else ""
-        change = f", изменить лимит {limit_id}" if limit_id else ""
-        denied = await confirm_write(
-            "set_limit",
-            f"Установить лимит {sizes} на {period_number}×код {period_type} "
-            f"для {target}{product}{change}?",
-        )
+        args = {
+            "card_id": card_id, "group_id": group_id, "product_type": product_type, "product_group": product_group,
+            "liters": liters, "rubles": rubles, "period_number": period_number, "period_type": period_type,
+            "transactions_count": transactions_count, "limit_id": limit_id,
+        }
+        summary = ""
+        audit_target: dict[str, object] = {"card_id": card_id} if card_id else {"group_id": group_id}
+        if not read_only():
+            whom, audit_target = await target_line(card_id, group_id)
+            if whom is None:
+                return not_found(card_id, group_id)
+            try:
+                existing = (await client.limits.get_limits(card_id=card_id, group_id=group_id)).data.result or []
+            except (APIError, RequestValidationError) as exc:
+                return _error(exc)
+            new = (
+                f"{sizes} на {period_words(period_number, period_type)}, продукт "
+                f"{product_type or product_group or 'все продукты'}"
+                + (f", не больше {transactions_count} операций" if transactions_count else "")
+            )
+            if limit_id:
+                old = next((item for item in existing if str(item.id) == limit_id), None)
+                if old is None:
+                    return _json(
+                        {
+                            "error": "not_found",
+                            "message": f"Лимита {limit_id} нет у этой цели в get_limits: ничего не изменено. "
+                            "Возьми limit_id из get_limits по той же карте или группе.",
+                        }
+                    )
+                summary = f"Изменить лимит: {whom}.\nБыло: {describe_limit(old)}.\nСтанет: {new}."
+            else:
+                now = "; ".join(describe_limit(item) for item in existing[:5]) or "нет"
+                summary = f"Установить новый лимит: {whom}.\nСтанет: {new}.\nУже есть у цели: {now}."
+        approval, denied = await confirm_write("set_limit", summary, 1, audit_target, args)
         if denied:
             return denied
-        try:
-            budget.spend()
-            response = await client.limits.set_limit(limits=[item])
-        except (APIError, BudgetExceededError, RequestValidationError) as exc:
-            return _error(exc)
-        return _json({"status": "saved", "limit_ids": list(response.data or [])})
+        response, failed = await perform(
+            approval, lambda: client.limits.set_limit(limits=[item]), "лимиты цели в get_limits"
+        )
+        if failed:
+            return failed
+        limit_ids = list(response.data or [])
+        finish(approval, "done" if limit_ids else "not_done", {"limit_ids": limit_ids})
+        return _json({"status": "saved", "limit_ids": limit_ids})
 
     @beta_async_tool
     async def set_region_limit(
@@ -275,20 +386,31 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             return _json({"error": "bad_request", "message": str(exc)[:300]})
         verb = "Разрешить" if limit_type == 1 else "Запретить"
-        target = f"карте {card_id}" if card_id else f"группе {group_id}"
         place = f"{country}" + (f"/{region}" if region else "")
         extra = f", АЗС {service_center}" if service_center else ""
-        denied = await confirm_write(
-            "set_region_limit", f"{verb} регион {place}{extra} для {target}?"
+        args = {
+            "card_id": card_id, "group_id": group_id, "country": country, "region": region,
+            "service_center": service_center, "partner": partner, "limit_type": limit_type,
+            "region_limit_id": region_limit_id,
+        }
+        summary, audit_target, problem = await rule_change_summary(
+            "region", region_limit_id, card_id, group_id, f"{verb} регион {place}{extra}"
         )
+        if problem:
+            return problem
+        approval, denied = await confirm_write("set_region_limit", summary, 1, audit_target, args)
         if denied:
             return denied
-        try:
-            budget.spend()
-            response = await client.region_limits.set_region_limit(region_limits=[item])
-        except (APIError, BudgetExceededError, RequestValidationError) as exc:
-            return _error(exc)
-        return _json({"status": "saved", "region_limit_ids": list(response.data or [])})
+        response, failed = await perform(
+            approval,
+            lambda: client.region_limits.set_region_limit(region_limits=[item]),
+            "региональные лимиты цели в get_access_rules",
+        )
+        if failed:
+            return failed
+        ids = list(response.data or [])
+        finish(approval, "done" if ids else "not_done", {"region_limit_ids": ids})
+        return _json({"status": "saved", "region_limit_ids": ids})
 
     @beta_async_tool
     async def set_restriction(
@@ -332,101 +454,122 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             return _json({"error": "bad_request", "message": str(exc)[:300]})
         verb = "Разрешить" if restriction_type == 1 else "Запретить"
-        target = f"карте {card_id}" if card_id else f"группе {group_id}"
-        denied = await confirm_write(
-            "set_restriction", f"{verb} продукт {product_type} для {target}?"
+        args = {
+            "card_id": card_id, "group_id": group_id, "product_type": product_type,
+            "product_group": product_group, "restriction_type": restriction_type, "restriction_id": restriction_id,
+        }
+        summary, audit_target, problem = await rule_change_summary(
+            "restriction", restriction_id, card_id, group_id, f"{verb} продукт {product_type}"
         )
+        if problem:
+            return problem
+        approval, denied = await confirm_write("set_restriction", summary, 1, audit_target, args)
         if denied:
             return denied
-        try:
-            budget.spend()
-            response = await client.restrictions.set_restriction(restrictions=[item])
-        except (APIError, BudgetExceededError, RequestValidationError) as exc:
-            return _error(exc)
-        return _json({"status": "saved", "restriction_ids": list(response.data or [])})
+        response, failed = await perform(
+            approval,
+            lambda: client.restrictions.set_restriction(restrictions=[item]),
+            "товарные ограничители цели в get_access_rules",
+        )
+        if failed:
+            return failed
+        ids = list(response.data or [])
+        finish(approval, "done" if ids else "not_done", {"restriction_ids": ids})
+        return _json({"status": "saved", "restriction_ids": ids})
 
     @beta_async_tool
-    async def remove_limit(limit_id: str, group_id: str | None = None) -> str:
-        """Удалить продуктовый лимит. ИЗМЕНЯЕТ ДАННЫЕ, по тарифу, необратимо."""
+    async def remove_limit(limit_id: str, card_id: str | None = None, group_id: str | None = None) -> str:
+        """Удалить продуктовый лимит карты или группы. ИЗМЕНЯЕТ ДАННЫЕ, по тарифу, необратимо."""
         limit_id = str(limit_id).strip()
         if not limit_id:
             return _json({"error": "bad_request", "message": "Нужен limit_id."})
+        card_id = (card_id or "").strip() or None
         group_id = (group_id or "").strip() or None
-        target = f" группы {group_id}" if group_id else ""
-        denied = await confirm_write(
-            "remove_limit", f"Удалить продуктовый лимит {limit_id}{target}? Это необратимо."
+        summary = ""
+        audit_target: dict[str, object] = {"limit_id": limit_id, **({"group_id": group_id} if group_id else {})}
+        if not read_only():
+            try:
+                existing = (await client.limits.get_limits(card_id=card_id, group_id=group_id)).data.result or []
+            except (APIError, RequestValidationError) as exc:
+                return _error(exc)
+            old = next((item for item in existing if str(item.id) == limit_id), None)
+            if old is None:
+                return _json(
+                    {
+                        "error": "not_found",
+                        "message": f"Лимита {limit_id} нет в get_limits по этой цели: ничего не удалено. "
+                        "Передай card_id или group_id, у которых он показан в get_limits.",
+                    }
+                )
+            summary = f"Удалить {describe_limit(old)} ({old_owner(old)})? Это необратимо."
+        approval, denied = await confirm_write("remove_limit", summary, 1, audit_target, {"limit_id": limit_id})
+        if denied:
+            return denied
+        response, failed = await perform(
+            approval,
+            lambda: client.limits.remove_limit(limit_id=limit_id, group_id=group_id),
+            "лимиты цели в get_limits",
+        )
+        if failed:
+            return failed
+        finish(approval, "done" if response.data else "not_done")
+        return _json({"status": "removed", "limit_id": limit_id, "removed": bool(response.data)})
+
+    async def remove_rule(kind: str, action: str, key: str, rule_id: str, group_id: str | None, call: Any) -> str:
+        """Удаление регионального лимита или ограничителя по правилу из последнего get_access_rules."""
+        rule_id = str(rule_id).strip()
+        if not rule_id:
+            return _json({"error": "bad_request", "message": "Нужен ID правила."})
+        summary = ""
+        if not read_only():
+            rule = rules_seen.get(f"{kind}:{rule_id}")
+            if rule is None:
+                return _json(
+                    {
+                        "error": "unknown_rule",
+                        "message": f"Правила {rule_id} нет в ответах get_access_rules этой сессии: ничего не "
+                        "удалено. Сначала вызови get_access_rules по карте или группе, "
+                        "чтобы человек видел, что удаляется.",
+                    }
+                )
+            summary = f"Удалить {rule['text']}? Это необратимо."
+        approval, denied = await confirm_write(
+            action, summary, 1, {"rule_id": rule_id, **({"group_id": group_id} if group_id else {})}, {"id": rule_id}
         )
         if denied:
             return denied
-        try:
-            budget.spend()
-            response = await client.limits.remove_limit(limit_id=limit_id, group_id=group_id)
-        except (APIError, BudgetExceededError, RequestValidationError) as exc:
-            return _error(exc)
-        return _json(
-            {"status": "removed", "limit_id": limit_id, "removed": bool(response.data)}
-        )
+        response, failed = await perform(approval, lambda: call(rule_id), "правила цели в get_access_rules")
+        if failed:
+            return failed
+        finish(approval, "done" if response.data else "not_done")
+        if response.data:
+            rules_seen.pop(f"{kind}:{rule_id}", None)
+        return _json({"status": "removed", key: rule_id, "removed": bool(response.data)})
 
     @beta_async_tool
-    async def remove_region_limit(
-        region_limit_id: str, group_id: str | None = None
-    ) -> str:
+    async def remove_region_limit(region_limit_id: str, group_id: str | None = None) -> str:
         """Удалить региональный лимит. ИЗМЕНЯЕТ ДАННЫЕ, по тарифу, необратимо."""
-        region_limit_id = str(region_limit_id).strip()
-        if not region_limit_id:
-            return _json({"error": "bad_request", "message": "Нужен region_limit_id."})
         group_id = (group_id or "").strip() or None
-        target = f" группы {group_id}" if group_id else ""
-        denied = await confirm_write(
+        return await remove_rule(
+            "region",
             "remove_region_limit",
-            f"Удалить региональный лимит {region_limit_id}{target}? Это необратимо.",
-        )
-        if denied:
-            return denied
-        try:
-            budget.spend()
-            response = await client.region_limits.remove_region_limit(
-                regionlimit_id=region_limit_id, group_id=group_id
-            )
-        except (APIError, BudgetExceededError, RequestValidationError) as exc:
-            return _error(exc)
-        return _json(
-            {
-                "status": "removed",
-                "region_limit_id": region_limit_id,
-                "removed": bool(response.data),
-            }
+            "region_limit_id",
+            region_limit_id,
+            group_id,
+            lambda rid: client.region_limits.remove_region_limit(regionlimit_id=rid, group_id=group_id),
         )
 
     @beta_async_tool
-    async def remove_restriction(
-        restriction_id: str, group_id: str | None = None
-    ) -> str:
+    async def remove_restriction(restriction_id: str, group_id: str | None = None) -> str:
         """Удалить товарный ограничитель. ИЗМЕНЯЕТ ДАННЫЕ, по тарифу, необратимо."""
-        restriction_id = str(restriction_id).strip()
-        if not restriction_id:
-            return _json({"error": "bad_request", "message": "Нужен restriction_id."})
         group_id = (group_id or "").strip() or None
-        target = f" группы {group_id}" if group_id else ""
-        denied = await confirm_write(
+        return await remove_rule(
+            "restriction",
             "remove_restriction",
-            f"Удалить товарный ограничитель {restriction_id}{target}? Это необратимо.",
-        )
-        if denied:
-            return denied
-        try:
-            budget.spend()
-            response = await client.restrictions.remove_restriction(
-                restriction_id=restriction_id, group_id=group_id
-            )
-        except (APIError, BudgetExceededError, RequestValidationError) as exc:
-            return _error(exc)
-        return _json(
-            {
-                "status": "removed",
-                "restriction_id": restriction_id,
-                "removed": bool(response.data),
-            }
+            "restriction_id",
+            restriction_id,
+            group_id,
+            lambda rid: client.restrictions.remove_restriction(restriction_id=rid, group_id=group_id),
         )
 
     return {

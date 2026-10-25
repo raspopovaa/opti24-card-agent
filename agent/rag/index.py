@@ -25,7 +25,7 @@ from ..knowledge import Section, as_result, rank
 from .embeddings import Embedder, cosine
 
 DEFAULT_PATH = Path("data/knowledge.db")
-MIN_SIMILARITY = 0.45  # ниже — раздел не по теме вопроса
+MIN_SIMILARITY = 0.52  # bge-m3: 0.50–0.55 — 35/40 верно и 5/5 «не по теме» без ответа
 _RRF_K = 60
 
 _SCHEMA = """

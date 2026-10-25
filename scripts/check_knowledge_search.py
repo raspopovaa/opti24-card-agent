@@ -26,7 +26,7 @@ from agent.rag import KnowledgeIndex, embedder_from_env, index_path  # noqa: E40
 
 CASE_FILES = ("retrieval_cases.jsonl", "colloquial_cases.jsonl")
 METHODS = ("слова", "смысл", "rrf", "векторы первыми")
-THRESHOLDS = (0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70)
+THRESHOLDS = (0.40, 0.45, 0.50, 0.52, 0.55, 0.60, 0.65, 0.70)
 
 
 def load_cases() -> list[dict[str, object]]:
@@ -84,7 +84,7 @@ async def main() -> int:
     for method in METHODS:
         print(f"  {method}: верно {hits[method]}/{len(known)}, не по теме без ответа {silent[method]}/{unknown}")
 
-    print("\nПорог сходства для «векторы первыми» (сейчас AGENT_RAG_MIN_SIMILARITY или 0.45):")
+    print("\nПорог сходства для «векторы первыми» (сейчас AGENT_RAG_MIN_SIMILARITY или 0.52):")
     for threshold in THRESHOLDS:
         right = quiet = 0
         for scored, word_top, accepted in scored_cases:

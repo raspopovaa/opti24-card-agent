@@ -11,7 +11,7 @@ import pytest
 
 from agent.config import Mode
 from agent.knowledge import Section, load_sections
-from agent.rag import HashEmbedder, KnowledgeIndex, embedder_from_env
+from agent.rag import HashEmbedder, KnowledgeIndex, assess, embedder_from_env
 from tests.test_agent import make_tools
 from tests.test_knowledge import QUESTIONS
 
@@ -90,17 +90,35 @@ def test_model_failure_falls_back_to_words(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(("question", "section"), QUESTIONS.items())
 def test_word_answers_stay_in_results_with_vectors(question: str, section: str) -> None:
-    # Векторы идут первыми, но раздел, найденный словами, из ответа не пропадает.
+    # Даже со слабой моделью раздел, найденный словами, из ответа не пропадает.
     index = KnowledgeIndex(load_sections(), HashEmbedder(), None)
 
     assert section in _search(index, question)[0]
 
 
-def test_vectors_rank_first_and_words_fill_the_rest(tmp_path: Path) -> None:
-    # «Сбор» по словам находит «Сервисный сбор», а модель считает вопрос блокировкой.
+def test_rrf_puts_section_found_by_words_and_meaning_first(tmp_path: Path) -> None:
+    # Векторы ставят блокировку и сбор вровень, слова находят только сбор: он и первый.
     index = KnowledgeIndex(SECTIONS, ConceptEmbedder(), tmp_path / "k.db")
 
-    assert _search(index, "сбор, потерял карту") == (["Как заблокировать карту", "Сервисный сбор"], "hybrid")
+    found, _ = asyncio.run(index.search("сервисный сбор, посеял", fusion="rrf"))
+
+    assert found[0]["section"] == "Сервисный сбор"
+
+
+def test_threshold_comes_from_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_RAG_MIN_SIMILARITY", "0.99")
+    index = KnowledgeIndex(SECTIONS, ConceptEmbedder(), tmp_path / "k.db")
+
+    # «сбор, посеял» похож на оба раздела на 0,71: выше порога 0,99 нет ничего, отвечают слова.
+    assert _search(index, "сервисный сбор, посеял") == (["Сервисный сбор"], "hybrid")
+
+
+def test_vectors_first_keeps_model_order(tmp_path: Path) -> None:
+    index = KnowledgeIndex(SECTIONS, ConceptEmbedder(), tmp_path / "k.db")
+
+    found, _ = asyncio.run(index.search("сбор, потерял карту", fusion="vectors_first"))
+
+    assert [item["section"] for item in found] == ["Как заблокировать карту", "Сервисный сбор"]
 
 
 def test_embedder_is_off_unless_model_is_set(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,3 +142,43 @@ def test_lookup_knowledge_says_how_it_searched(tmp_path: Path, monkeypatch: pyte
 
     assert found["search"] == "hybrid" and found["sections"][0]["section"] == "Сервисный сбор"
     assert budget.spent == 0
+
+
+def test_clear_question_is_answered_with_confidence(tmp_path: Path) -> None:
+    index = KnowledgeIndex(SECTIONS, ConceptEmbedder(), tmp_path / "k.db")
+
+    answer = asyncio.run(index.answer("водитель посеял пластик, отключите"))
+
+    assert answer["confidence"] == "high" and "alternatives" not in answer
+
+
+def test_two_equal_sections_ask_for_clarification(tmp_path: Path) -> None:
+    embedder = ConceptEmbedder()
+    index = KnowledgeIndex(SECTIONS, embedder, tmp_path / "k.db")
+
+    answer = asyncio.run(index.answer("сервисный сбор, посеял"))
+
+    assert answer["confidence"] == "low" and "close_alternative" in answer["doubts"]
+    assert set(answer["alternatives"]) == {"Как заблокировать карту", "Сервисный сбор"}
+    assert embedder.texts.count("сервисный сбор, посеял") == 1  # вектор вопроса считается один раз
+
+
+def test_assess_flags_weak_match_and_disagreeing_words() -> None:
+    block, fee = SECTIONS
+
+    assert assess([(0.53, block), (0.30, fee)], None, 0.52) == ["weak_match"]
+    assert assess([(0.90, block), (0.60, fee)], fee, 0.52) == []  # слова среди двух лучших
+    assert assess([(0.90, block)], fee, 0.52) == ["words_disagree"]
+    assert assess([(0.40, block)], fee, 0.52) == []  # векторы молчат: решают слова
+
+
+def test_lookup_knowledge_tells_agent_to_ask(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent.tools import context
+
+    monkeypatch.setattr(context, "load_sections", lambda: SECTIONS)
+    monkeypatch.setattr(context, "embedder_from_env", ConceptEmbedder)
+    _, _, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path)
+
+    found = json.loads(asyncio.run(tools["lookup_knowledge"].call({"question": "сервисный сбор, посеял"})))
+
+    assert found["confidence"] == "low" and "ответь по первому разделу" in found["message"]

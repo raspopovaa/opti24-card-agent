@@ -1,37 +1,42 @@
-"""Сравнить поиск по базе знаний: только основы слов против гибридного с моделью эмбеддингов.
+"""Сравнить способы поиска по базе знаний на модели эмбеддингов.
 
-    AGENT_EMBEDDING_MODEL=<модель> AGENT_BASE_URL=... AGENT_API_KEY=... \\
-        python scripts/check_knowledge_search.py
+    AGENT_EMBEDDING_MODEL=<модель> python scripts/check_knowledge_search.py [--verbose]
 
-Без сети, если AGENT_EMBEDDING_MODEL=hash. Запросов к API Opti24 нет; к API модели —
-один запрос на 32 раздела при первом запуске (векторы сохраняются в data/knowledge.db)
-и по одному на каждый вопрос.
+Вопросы: evals/retrieval_cases.jsonl (25 с ответом и 5 не по теме) и
+evals/colloquial_cases.jsonl (15 разговорных). Для каждого способа — сколько
+вопросов нашли верный раздел первым и сколько вопросов не по теме верно остались
+без ответа. В конце — таблица порога сходства (AGENT_RAG_MIN_SIMILARITY): сколько
+верных ответов и молчаний не по теме дал бы каждый порог. Запросов к API Opti24
+нет; к API модели — один запрос на 32 раздела при первом запуске (векторы
+сохраняются в data/knowledge.db) и по одному на вопрос.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from agent.knowledge import load_sections, search  # noqa: E402
-from agent.rag import KnowledgeIndex, embedder_from_env, index_path  # noqa: E402
+from agent.knowledge import load_sections, rank, search  # noqa: E402
+from agent.rag import KnowledgeIndex, assess, embedder_from_env, index_path  # noqa: E402
+from agent.rag.index import MIN_SIMILARITY  # noqa: E402
 
-# Вопрос и раздел, который должен быть первым. Вторая половина — разговорные слова,
-# которых нет в тексте договора: их и должен находить векторный поиск.
-CASES = {
-    "как заблокировать потерянную карту": "Как заблокировать или разблокировать карту",
-    "какой сервисный сбор": "Сервисный сбор",
-    "до какого числа вернуть документы": "Закрывающие документы",
-    "водитель посеял карту, отключите её": "Как заблокировать или разблокировать карту",
-    "сколько вы берёте сверху за обслуживание": "Сервисный сбор",
-    "когда пришлёте бумаги за месяц": "Закрывающие документы",
-    "почему на заправке не дали солярку": "Почему по карте могут не отпустить топливо",
-    "как закинуть деньги на договор": "Пополнение счёта договора",
-}
+CASE_FILES = ("retrieval_cases.jsonl", "colloquial_cases.jsonl")
+METHODS = ("слова", "смысл", "rrf", "векторы первыми")
+THRESHOLDS = (0.40, 0.45, 0.50, 0.52, 0.55, 0.60, 0.65, 0.70)
+GAPS = (0.0, 0.01, 0.02, 0.03, 0.05)  # CLOSE_GAP; LOW_MARGIN берётся таким же
+
+
+def load_cases() -> list[dict[str, object]]:
+    cases = []
+    for name in CASE_FILES:
+        with (ROOT / "evals" / name).open(encoding="utf-8") as lines:
+            cases += [json.loads(line) for line in lines if line.strip()]
+    return cases
 
 
 async def main() -> int:
@@ -39,22 +44,75 @@ async def main() -> int:
     if embedder is None:
         print("Задайте AGENT_EMBEDDING_MODEL (и AGENT_BASE_URL, AGENT_API_KEY для модели в API).")
         return 2
+    verbose = "--verbose" in sys.argv
     sections = load_sections()
     index = KnowledgeIndex(sections, embedder, index_path())
-    hits = {"words": 0, "meaning": 0, "hybrid": 0}
-    for question, expected in CASES.items():
-        words = search(sections, question)
-        hybrid, method = await index.search(question)
-        meaning = await index.by_meaning(question) or []
-        top_meaning = meaning[0]["section"] if meaning else "—"
-        hits["meaning"] += top_meaning == expected
-        top_words = words[0]["section"] if words else "—"
-        top_hybrid = hybrid[0]["section"] if hybrid else "—"
-        hits["words"] += top_words == expected
-        hits["hybrid"] += top_hybrid == expected
-        print(f"{question}\n  слова: {top_words}\n  смысл: {top_meaning}\n  {method}: {top_hybrid}")
-    print(f"\nМодель {embedder.model}: верно по словам {hits['words']}/{len(CASES)}, "
-          f"по смыслу {hits['meaning']}/{len(CASES)}, гибридно {hits['hybrid']}/{len(CASES)}")
+    cases = load_cases()
+    known = [case for case in cases if case["section"]]
+    hits = dict.fromkeys(METHODS, 0)
+    silent = dict.fromkeys(METHODS, 0)
+    # Для таблицы порога: разделы по косинусу, первый раздел по словам и что считается верным.
+    scored_cases: list[tuple[list[tuple[float, str]], str | None, set[object] | None]] = []
+    # Для таблицы уточнений: сходства с разделами, первый раздел по словам, верен ли ответ.
+    doubt_cases: list[tuple[list, object, bool]] = []
+
+    for case in cases:
+        question = str(case["q"])
+        expected = case["section"]
+        accepted = set(expected) if isinstance(expected, list) else {expected}
+        rrf, _ = await index.search(question, fusion="rrf")
+        first, _ = await index.search(question, fusion="vectors_first")
+        found = {
+            "слова": search(sections, question),
+            "смысл": await index.by_meaning(question) or [],
+            "rrf": rrf,
+            "векторы первыми": first,
+        }
+        scored = await index.similarities(question) or []
+        word_top = found["слова"][0]["section"] if found["слова"] else None
+        scored_cases.append(([(sim, sec.heading) for sim, sec in scored], word_top, accepted if expected else None))
+        ranked_words = rank(sections, question)
+        if expected:
+            first_top = first[0]["section"] if first else None
+            doubt_cases.append((scored, ranked_words[0][1] if ranked_words else None, first_top in accepted))
+        tops = {method: (items[0]["section"] if items else None) for method, items in found.items()}
+        correct = {method: (top in accepted if expected else top is None) for method, top in tops.items()}
+        for method, ok in correct.items():
+            if expected:
+                hits[method] += ok
+            else:
+                silent[method] += ok
+        if verbose or not all(correct.values()):
+            print(f"{question} — ждали {expected or 'ничего'}")
+            for method, top in tops.items():
+                print(f"  {method}: {top or '—'}")
+
+    unknown = len(cases) - len(known)
+    print(f"\nМодель {embedder.model}, {len(known)} вопросов с ответом и {unknown} не по теме:")
+    for method in METHODS:
+        print(f"  {method}: верно {hits[method]}/{len(known)}, не по теме без ответа {silent[method]}/{unknown}")
+
+    print("\nПорог сходства для «векторы первыми» (сейчас AGENT_RAG_MIN_SIMILARITY или 0.52):")
+    for threshold in THRESHOLDS:
+        right = quiet = 0
+        for scored, word_top, accepted in scored_cases:
+            above = [heading for sim, heading in scored if sim >= threshold]
+            top = above[0] if above else word_top
+            if accepted is None:
+                quiet += top is None
+            else:
+                right += top in accepted
+        print(f"  {threshold:.2f}: верно {right}/{len(known)}, не по теме без ответа {quiet}/{unknown}")
+
+    wrong_total = sum(not ok for _, _, ok in doubt_cases)
+    print(f"\nУточнение при сомнении (порог {MIN_SIMILARITY}; ошибок «векторы первыми» {wrong_total}):")
+    for gap in GAPS:
+        caught = asked = 0
+        for scored, word_top, ok in doubt_cases:
+            if assess(scored, word_top, MIN_SIMILARITY, close_gap=gap, low_margin=gap):
+                caught += not ok
+                asked += ok
+        print(f"  зазор {gap:.2f}: ошибок переспрошено {caught}/{wrong_total}, верных переспрошено зря {asked}")
     return 0
 
 

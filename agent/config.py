@@ -59,7 +59,7 @@ class Settings:
     audit_log: Path
     project: str = ""  # ID каталога Yandex Cloud; для остальных провайдеров пусто
     tool_routing: str = "auto"  # двухуровневый выбор инструментов у OpenAI-совместимых провайдеров: auto/on включают, off отключает
-    verify_answer: bool = True  # повторная сверка чисел инструментом (этап тестирования; AGENT_VERIFY_ANSWER=off отключает)
+    verify_answer: bool = False  # повторная сверка чисел инструментом тратит пакет API; AGENT_VERIFY_ANSWER=on включает
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -91,5 +91,5 @@ class Settings:
             audit_log=Path(os.environ.get("AGENT_AUDIT_LOG", "./agent-audit.jsonl")),
             project=project,
             tool_routing=_choice_env("AGENT_TOOL_ROUTING", "auto", {"auto", "on", "off"}),
-            verify_answer=_choice_env("AGENT_VERIFY_ANSWER", "on", {"on", "off"}) == "on",
+            verify_answer=_choice_env("AGENT_VERIFY_ANSWER", "off", {"on", "off"}) == "on",
         )

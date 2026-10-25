@@ -101,6 +101,12 @@ def mask_email(email: str | None) -> str | None:
     return f"{name[:2]}***@{domain}"
 
 
+def mask_phone(phone: str | None) -> str | None:
+    """Телефон для модели без лишних личных данных: последние 2 цифры, «…-00»."""
+    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    return f"…-{digits[-2:]}" if len(digits) >= 2 else None
+
+
 def percent(part: int, whole: int) -> str | None:
     """Доля в процентах с одним знаком после запятой; None, если делить не на что."""
     if whole <= 0:

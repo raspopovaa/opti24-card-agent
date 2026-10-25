@@ -10,7 +10,7 @@ from apisdkopti24.errors import RequestValidationError
 
 from ..config import Mode
 from ..safety import BudgetExceededError, mask_card_number
-from .common import MAX_LIST, _error, _iso, _json, _rub_optional, describe_card
+from .common import MAX_LIST, _error, _iso, _json, _rub_optional, describe_card, mask_phone
 from .context import ToolContext
 
 
@@ -129,7 +129,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                         ),
                         "position": d.position,
                         "role": d.role,
-                        "phone": d.mobile_phone,
+                        "phone": mask_phone(d.mobile_phone),
                     }
                     for d in (drivers_response.data.result or [])
                 ]

@@ -108,6 +108,9 @@ class FakeOpti24:
 
         async def block_card(*, card_ids: list[str], block: bool) -> NS:
             self.blocked += card_ids if block else []
+            for c in (card, *self.more_cards):
+                if c.id in card_ids:
+                    c.status, c.status_name = ("Locked(Client)", "Заблокирована") if block else ("Active", "Активна")
             return NS(data=list(card_ids))
 
         card = NS(
@@ -260,6 +263,9 @@ class FakeOpti24:
 
         async def set_card_comment(**kwargs: object) -> NS:
             self.comments.append((str(kwargs["card_id"]), str(kwargs["comment"])))
+            for c in (card, *self.more_cards):
+                if c.id == kwargs["card_id"]:
+                    c.comment = str(kwargs["comment"])
             return NS(data=True)
 
         async def set_limit(**kwargs: object) -> NS:

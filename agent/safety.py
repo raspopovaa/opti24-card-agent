@@ -5,14 +5,16 @@
 инструмента: модель не может её обойти, как бы ни был сформулирован запрос.
 
 Журнал аудита на каждое изменение пишет две записи с общим ``id``: решение
-человека до запроса к API и исход после него. По журналу видно, что, над какой
-картой или правилом и с каким результатом было сделано.
+человека до запроса к API и исход после него. По журналу видно, кто из людей
+подтвердил, что, над какой картой или правилом и с каким результатом было сделано.
 """
 
 from __future__ import annotations
 
+import getpass
 import hashlib
 import json
+import os
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -63,6 +65,17 @@ def _digest(args: Mapping[str, object] | None) -> str | None:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
+def operator_name() -> str:
+    """Кто отвечает на вопросы о подтверждении: AGENT_OPERATOR, иначе пользователь ОС."""
+    name = os.environ.get("AGENT_OPERATOR", "").strip()
+    if name:
+        return name[:64]
+    try:
+        return getpass.getuser()
+    except (KeyError, OSError):
+        return "unknown"
+
+
 @dataclass(frozen=True, slots=True)
 class Approval:
     """Решение по одному изменению; истинно, только если человек сказал «да»."""
@@ -82,6 +95,8 @@ class ApprovalGate:
     audit_log: Path
     # Где спрашивали человека: terminal, mcp_elicitation, web. Пишется в журнал.
     channel: str = "terminal"
+    # Кто из людей отвечает на вопросы: после спорной блокировки по журналу видно, кто подтвердил.
+    operator: str = field(default_factory=operator_name)
     decisions: list[dict[str, object]] = field(default_factory=list)
 
     async def approve(
@@ -140,6 +155,7 @@ class ApprovalGate:
                 **({"args_sha256": digest} if digest else {}),
                 "approved": approved,
                 "decided_by": decided_by,
+                **({"operator": self.operator} if decided_by != "read_only" else {}),
             }
         )
         return approval

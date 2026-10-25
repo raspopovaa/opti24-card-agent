@@ -21,6 +21,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     budget = ctx.budget
     reports_root = ctx.reports_root
     confirm_write = ctx.confirm_write
+    perform = ctx.perform
     profile_email = ctx.profile_email
 
     @beta_async_tool
@@ -95,21 +96,31 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             + (f" и отправить на {email}" if email else "")
             + "? Отчёт тарифный и формируется асинхронно."
         )
-        denied = await confirm_write("order_fuel_report", summary, len(cards or groups or [1]))
+        approval, denied = await confirm_write(
+            "order_fuel_report",
+            summary,
+            len(cards or groups or [1]),
+            {"period": f"{date_from}…{date_to}", "cards": len(cards or []), "groups": len(groups or [])},
+            {"date_from": date_from, "date_to": date_to, "format": report_format, "email": email,
+             "card_ids": cards, "group_ids": groups},
+        )
         if denied:
             return denied
-        try:
-            budget.spend()
-            response = await client.reports.order_report_v1(
+        response, failed = await perform(
+            approval,
+            lambda: client.reports.order_report_v1(
                 start=date_from,
                 end=date_to,
                 report_format=report_format,
                 email=email,
                 cards_list=cards,
                 group_id=groups,
-            )
-        except (APIError, BudgetExceededError, RequestValidationError) as exc:
-            return _error(exc)
+            ),
+            "заказанные отчёты в get_report_status",
+        )
+        if failed:
+            return failed
+        ctx.finish(approval, "done" if response.data else "not_done", {"job_ids": list(response.data or [])})
         return _json(
             {
                 "status": "ordered",

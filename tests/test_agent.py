@@ -160,7 +160,16 @@ class FakeOpti24:
         async def get_card_drivers(**_: object) -> NS:
             return NS(data=NS(result=[driver], total_count=1))
 
-        async def get_cards_v2(**_: object) -> NS:
+        # Ещё карты договора: их видит только постраничный перебор, которым подтверждение ищет карты по ID.
+        self.more_cards = [
+            NS(id=cid, number=f"78260100000000{n:02d}", status="Active", status_name="Активна",
+               group_name="Грузовые", comment=f"Машина {cid}")
+            for n, cid in enumerate(("a", "b", "c7"), start=2)
+        ]
+
+        async def get_cards_v2(**kwargs: object) -> NS:
+            if "page" in kwargs:
+                return NS(data=NS(result=[card, *self.more_cards], total_count=1 + len(self.more_cards)))
             return NS(data=NS(result=[card], total_count=1))
 
         async def get_limits(**_: object) -> NS:
@@ -373,7 +382,7 @@ def test_block_works_after_yes_and_is_audited(tmp_path: Path) -> None:
     asyncio.run(tools["block_cards"].call({"card_ids": ["a", "b"], "reason": "тест"}))
     assert fake.blocked == ["a", "b"]
     log = (tmp_path / "audit.jsonl").read_text(encoding="utf-8")
-    assert '"approved": true' in log and "тест" not in log  # причина и ID в журнал не попадают
+    assert '"approved": true' in log and "тест" not in log  # причина от модели в журнал не попадает
 
 
 def test_unblock_uses_same_tool(tmp_path: Path) -> None:
@@ -436,8 +445,9 @@ def test_block_dedupes_ids_and_shows_them_to_human(tmp_path: Path) -> None:
     )
     assert out["status"] == "blocked" and out["done"] == ["c7"] and out["not_done"] == []
     assert fake.blocked == ["c7"]
-    assert "c7" in asked[0]
-    assert "c7" not in (tmp_path / "audit.jsonl").read_text(encoding="utf-8")
+    assert "c7" in asked[0] and "7826010000000004" in asked[0] and "Машина c7" in asked[0]
+    log = (tmp_path / "audit.jsonl").read_text(encoding="utf-8")
+    assert '"card_ids": ["c7"]' in log and "…0004" in log and "7826010000000004" not in log
 
 
 def test_limits_allow_contract_and_reject_two_targets(tmp_path: Path) -> None:
@@ -787,8 +797,10 @@ def test_download_fuel_report_saves_file(tmp_path: Path) -> None:
 
 def test_remove_tools_confirm_and_call(tmp_path: Path) -> None:
     _, budget, tools = make_tools(Mode.CONFIRM, answer=True, tmp=tmp_path, budget_limit=5)
+    asyncio.run(tools["get_access_rules"].call({"card_id": "c1"}))  # человек видит, что удаляется
+    budget.spent = 0
     for name, args in (
-        ("remove_limit", {"limit_id": "l1"}),
+        ("remove_limit", {"limit_id": "l1", "card_id": "c1"}),
         ("remove_region_limit", {"region_limit_id": "r1"}),
         ("remove_restriction", {"restriction_id": "s1"}),
     ):

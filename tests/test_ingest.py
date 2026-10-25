@@ -57,6 +57,8 @@ def pptx(path: Path) -> Path:
 @pytest.fixture
 def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Store:
     monkeypatch.setenv("OPTI24_KNOWLEDGE_STORE", str(tmp_path / "store"))
+    # Загруженные документы по умолчанию внутренние; в тестах поиска они включены явно.
+    monkeypatch.setenv("OPTI24_KNOWLEDGE_INTERNAL", "1")
     return Store(tmp_path / "store")
 
 
@@ -157,6 +159,12 @@ def test_internal_documents_can_be_hidden(store: Store, tmp_path: Path, monkeypa
     store.add(file, title="Внутренний", classification="internal")
     monkeypatch.setenv("OPTI24_KNOWLEDGE_INTERNAL", "0")
     assert load_store_sections() == []
+    monkeypatch.delenv("OPTI24_KNOWLEDGE_INTERNAL")  # по умолчанию внутренние тоже скрыты
+    assert load_store_sections() == []
+    public = tmp_path / "b.md"
+    public.write_text("## Тарифы\nТарифы на сервисные услуги опубликованы на сайте.", encoding="utf-8")
+    store.add(public, title="Публичный", classification="public")
+    assert [s.title for s in load_store_sections()] == ["Публичный"]
 
 
 def test_lookup_knowledge_tool_answers_from_ingested_document(

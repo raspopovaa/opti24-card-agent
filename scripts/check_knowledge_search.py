@@ -5,8 +5,10 @@
 Вопросы: evals/retrieval_cases.jsonl (25 с ответом и 5 не по теме) и
 evals/colloquial_cases.jsonl (15 разговорных). Для каждого способа — сколько
 вопросов нашли верный раздел первым и сколько вопросов не по теме верно остались
-без ответа. Запросов к API Opti24 нет; к API модели — один запрос на 32 раздела
-при первом запуске (векторы сохраняются в data/knowledge.db) и по одному на вопрос.
+без ответа. В конце — таблица порога сходства (AGENT_RAG_MIN_SIMILARITY): сколько
+верных ответов и молчаний не по теме дал бы каждый порог. Запросов к API Opti24
+нет; к API модели — один запрос на 32 раздела при первом запуске (векторы
+сохраняются в data/knowledge.db) и по одному на вопрос.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from agent.rag import KnowledgeIndex, embedder_from_env, index_path  # noqa: E40
 
 CASE_FILES = ("retrieval_cases.jsonl", "colloquial_cases.jsonl")
 METHODS = ("слова", "смысл", "rrf", "векторы первыми")
+THRESHOLDS = (0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70)
 
 
 def load_cases() -> list[dict[str, object]]:
@@ -46,6 +49,8 @@ async def main() -> int:
     known = [case for case in cases if case["section"]]
     hits = dict.fromkeys(METHODS, 0)
     silent = dict.fromkeys(METHODS, 0)
+    # Для таблицы порога: разделы по косинусу, первый раздел по словам и что считается верным.
+    scored_cases: list[tuple[list[tuple[float, str]], str | None, set[object] | None]] = []
 
     for case in cases:
         question = str(case["q"])
@@ -59,14 +64,17 @@ async def main() -> int:
             "rrf": rrf,
             "векторы первыми": first,
         }
+        scored = await index.similarities(question) or []
+        word_top = found["слова"][0]["section"] if found["слова"] else None
+        scored_cases.append(([(sim, sec.heading) for sim, sec in scored], word_top, accepted if expected else None))
         tops = {method: (items[0]["section"] if items else None) for method, items in found.items()}
-        right = {method: (top in accepted if expected else top is None) for method, top in tops.items()}
-        for method, ok in right.items():
+        correct = {method: (top in accepted if expected else top is None) for method, top in tops.items()}
+        for method, ok in correct.items():
             if expected:
                 hits[method] += ok
             else:
                 silent[method] += ok
-        if verbose or not all(right.values()):
+        if verbose or not all(correct.values()):
             print(f"{question} — ждали {expected or 'ничего'}")
             for method, top in tops.items():
                 print(f"  {method}: {top or '—'}")
@@ -75,6 +83,18 @@ async def main() -> int:
     print(f"\nМодель {embedder.model}, {len(known)} вопросов с ответом и {unknown} не по теме:")
     for method in METHODS:
         print(f"  {method}: верно {hits[method]}/{len(known)}, не по теме без ответа {silent[method]}/{unknown}")
+
+    print("\nПорог сходства для «векторы первыми» (сейчас AGENT_RAG_MIN_SIMILARITY или 0.45):")
+    for threshold in THRESHOLDS:
+        right = quiet = 0
+        for scored, word_top, accepted in scored_cases:
+            above = [heading for sim, heading in scored if sim >= threshold]
+            top = above[0] if above else word_top
+            if accepted is None:
+                quiet += top is None
+            else:
+                right += top in accepted
+        print(f"  {threshold:.2f}: верно {right}/{len(known)}, не по теме без ответа {quiet}/{unknown}")
     return 0
 
 

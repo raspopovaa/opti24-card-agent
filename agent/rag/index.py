@@ -44,22 +44,25 @@ class KnowledgeIndex:
         sections: list[Section],
         embedder: Embedder | None,
         path: Path | None = None,
-        min_similarity: float = MIN_SIMILARITY,
+        min_similarity: float | None = None,
     ) -> None:
         self._sections = sections
         self._embedder = embedder
         self._path = path
-        self._min_similarity = min_similarity
+        # Порог зависит от модели: подобрать его можно скриптом check_knowledge_search.
+        setting = os.environ.get("AGENT_RAG_MIN_SIMILARITY", "").strip()
+        default = float(setting) if setting else MIN_SIMILARITY
+        self._min_similarity = default if min_similarity is None else min_similarity
         self._vectors: list[list[float]] | None = None
 
     async def search(
-        self, query: str, top: int = 3, fusion: str = "rrf"
+        self, query: str, top: int = 3, fusion: str = "vectors_first"
     ) -> tuple[list[dict[str, str]], str]:
         """Лучшие разделы и способ поиска: "hybrid" или "words" (без векторов).
 
-        На bge-m3 и 8 вопросах check_knowledge_search: слова 6/8, векторы 7/8, слияние
-        рангов ("rrf") 8/8, векторы первыми ("vectors_first") 7/8. Второй способ оставлен
-        для сравнения моделей.
+        На bge-m3 и 40 вопросах check_knowledge_search: слова 31, векторы 35, векторы
+        первыми ("vectors_first") 35, слияние рангов с равным весом ("rrf") 33. Второй
+        способ оставлен для сравнения моделей.
         """
         by_words = [section for _, section in rank(self._sections, query)]
         by_meaning = await self._by_meaning(query)
@@ -83,7 +86,8 @@ class KnowledgeIndex:
         found = await self._by_meaning(query)
         return None if found is None else [as_result(section) for section in found[:top]]
 
-    async def _by_meaning(self, query: str) -> list[Section] | None:
+    async def similarities(self, query: str) -> list[tuple[float, Section]] | None:
+        """Все разделы с косинусом к вопросу, лучшие первыми, без порога. None — модели нет."""
         if self._embedder is None or not query.strip():
             return None
         try:
@@ -91,13 +95,15 @@ class KnowledgeIndex:
             (wanted,) = await self._embedder.embed([query])
         except Exception:  # noqa: BLE001 — сеть или модель недоступны: остаётся поиск по словам
             return None
-        similar = [
-            (similarity, section)
-            for section, vector in zip(self._sections, vectors, strict=True)
-            if (similarity := cosine(wanted, vector)) >= self._min_similarity
-        ]
-        similar.sort(key=lambda pair: -pair[0])
-        return [section for _, section in similar]
+        scored = [(cosine(wanted, vector), section) for section, vector in zip(self._sections, vectors, strict=True)]
+        scored.sort(key=lambda pair: -pair[0])
+        return scored
+
+    async def _by_meaning(self, query: str) -> list[Section] | None:
+        scored = await self.similarities(query)
+        if scored is None:
+            return None
+        return [section for similarity, section in scored if similarity >= self._min_similarity]
 
     async def _section_vectors(self, embedder: Embedder) -> list[list[float]]:
         if self._vectors is not None:

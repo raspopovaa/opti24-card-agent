@@ -96,11 +96,21 @@ def test_word_answers_stay_in_results_with_vectors(question: str, section: str) 
     assert section in _search(index, question)[0]
 
 
-def test_section_found_by_words_and_meaning_comes_first(tmp_path: Path) -> None:
+def test_rrf_puts_section_found_by_words_and_meaning_first(tmp_path: Path) -> None:
     # Векторы ставят блокировку и сбор вровень, слова находят только сбор: он и первый.
     index = KnowledgeIndex(SECTIONS, ConceptEmbedder(), tmp_path / "k.db")
 
-    assert _search(index, "сервисный сбор, посеял")[0][0] == "Сервисный сбор"
+    found, _ = asyncio.run(index.search("сервисный сбор, посеял", fusion="rrf"))
+
+    assert found[0]["section"] == "Сервисный сбор"
+
+
+def test_threshold_comes_from_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_RAG_MIN_SIMILARITY", "0.99")
+    index = KnowledgeIndex(SECTIONS, ConceptEmbedder(), tmp_path / "k.db")
+
+    # «сбор, посеял» похож на оба раздела на 0,71: выше порога 0,99 нет ничего, отвечают слова.
+    assert _search(index, "сервисный сбор, посеял") == (["Сервисный сбор"], "hybrid")
 
 
 def test_vectors_first_keeps_model_order(tmp_path: Path) -> None:

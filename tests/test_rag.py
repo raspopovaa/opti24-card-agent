@@ -12,6 +12,7 @@ import pytest
 from agent.config import Mode
 from agent.knowledge import Section, load_sections
 from agent.rag import HashEmbedder, KnowledgeIndex, assess, embedder_from_env
+from agent.rag.index import pick_alternatives
 from tests.test_agent import make_tools
 from tests.test_knowledge import QUESTIONS
 
@@ -173,8 +174,6 @@ def test_assess_flags_weak_match_and_disagreeing_words() -> None:
 
 
 def test_word_hit_stays_among_alternatives() -> None:
-    from agent.rag.index import pick_alternatives
-
     assert pick_alternatives(["A", "B", "C"], "D") == ["A", "D", "B"]
     assert pick_alternatives(["A", "B", "C"], "C") == ["A", "C", "B"]
     assert pick_alternatives(["A", "B", "C"], "B") == ["A", "B", "C"]

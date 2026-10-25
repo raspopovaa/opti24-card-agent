@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from agent.knowledge import load_sections, rank, search  # noqa: E402
+from agent.knowledge import Section, load_sections, rank, search  # noqa: E402
 from agent.rag import KnowledgeIndex, assess, embedder_from_env, index_path  # noqa: E402
 from agent.rag.index import MIN_SIMILARITY  # noqa: E402
 
@@ -39,59 +39,72 @@ def load_cases() -> list[dict[str, object]]:
     return cases
 
 
+Scored = list[tuple[float, Section]]
+
+
 async def main() -> int:
     embedder = embedder_from_env()
     if embedder is None:
         print("Задайте AGENT_EMBEDDING_MODEL (и AGENT_BASE_URL, AGENT_API_KEY для модели в API).")
         return 2
-    verbose = "--verbose" in sys.argv
     sections = load_sections()
     index = KnowledgeIndex(sections, embedder, index_path())
     cases = load_cases()
-    known = [case for case in cases if case["section"]]
     hits = dict.fromkeys(METHODS, 0)
     silent = dict.fromkeys(METHODS, 0)
     # Для таблицы порога: разделы по косинусу, первый раздел по словам и что считается верным.
     scored_cases: list[tuple[list[tuple[float, str]], str | None, set[object] | None]] = []
     # Для таблицы уточнений: сходства с разделами, первый раздел по словам, верен ли ответ.
-    doubt_cases: list[tuple[list, object, bool]] = []
+    doubt_cases: list[tuple[Scored, Section | None, bool]] = []
 
     for case in cases:
         question = str(case["q"])
         expected = case["section"]
         accepted = set(expected) if isinstance(expected, list) else {expected}
-        rrf, _ = await index.search(question, fusion="rrf")
-        first, _ = await index.search(question, fusion="vectors_first")
-        found = {
-            "слова": search(sections, question),
-            "смысл": await index.by_meaning(question) or [],
-            "rrf": rrf,
-            "векторы первыми": first,
-        }
+        found = await search_all(index, sections, question)
         scored = await index.similarities(question) or []
         word_top = found["слова"][0]["section"] if found["слова"] else None
         scored_cases.append(([(sim, sec.heading) for sim, sec in scored], word_top, accepted if expected else None))
-        ranked_words = rank(sections, question)
         if expected:
-            first_top = first[0]["section"] if first else None
-            doubt_cases.append((scored, ranked_words[0][1] if ranked_words else None, first_top in accepted))
+            first = found["векторы первыми"]
+            ranked_words = rank(sections, question)
+            first_ok = (first[0]["section"] if first else None) in accepted
+            doubt_cases.append((scored, ranked_words[0][1] if ranked_words else None, first_ok))
         tops = {method: (items[0]["section"] if items else None) for method, items in found.items()}
         correct = {method: (top in accepted if expected else top is None) for method, top in tops.items()}
         for method, ok in correct.items():
-            if expected:
-                hits[method] += ok
-            else:
-                silent[method] += ok
-        if verbose or not all(correct.values()):
+            (hits if expected else silent)[method] += ok
+        if "--verbose" in sys.argv or not all(correct.values()):
             print(f"{question} — ждали {expected or 'ничего'}")
             for method, top in tops.items():
                 print(f"  {method}: {top or '—'}")
 
-    unknown = len(cases) - len(known)
-    print(f"\nМодель {embedder.model}, {len(known)} вопросов с ответом и {unknown} не по теме:")
+    known = sum(1 for case in cases if case["section"])
+    unknown = len(cases) - known
+    print(f"\nМодель {embedder.model}, {known} вопросов с ответом и {unknown} не по теме:")
     for method in METHODS:
-        print(f"  {method}: верно {hits[method]}/{len(known)}, не по теме без ответа {silent[method]}/{unknown}")
+        print(f"  {method}: верно {hits[method]}/{known}, не по теме без ответа {silent[method]}/{unknown}")
+    print_thresholds(scored_cases, known, unknown)
+    print_gaps(doubt_cases)
+    return 0
 
+
+async def search_all(index: KnowledgeIndex, sections: list[Section], question: str) -> dict[str, list]:
+    """Разделы, найденные каждым способом из METHODS."""
+    rrf, _ = await index.search(question, fusion="rrf")
+    first, _ = await index.search(question, fusion="vectors_first")
+    return {
+        "слова": search(sections, question),
+        "смысл": await index.by_meaning(question) or [],
+        "rrf": rrf,
+        "векторы первыми": first,
+    }
+
+
+def print_thresholds(
+    scored_cases: list[tuple[list[tuple[float, str]], str | None, set[object] | None]], known: int, unknown: int
+) -> None:
+    """Сколько верных ответов и молчаний не по теме дал бы каждый порог из THRESHOLDS."""
     print("\nПорог сходства для «векторы первыми» (сейчас AGENT_RAG_MIN_SIMILARITY или 0.52):")
     for threshold in THRESHOLDS:
         right = quiet = 0
@@ -102,8 +115,11 @@ async def main() -> int:
                 quiet += top is None
             else:
                 right += top in accepted
-        print(f"  {threshold:.2f}: верно {right}/{len(known)}, не по теме без ответа {quiet}/{unknown}")
+        print(f"  {threshold:.2f}: верно {right}/{known}, не по теме без ответа {quiet}/{unknown}")
 
+
+def print_gaps(doubt_cases: list[tuple[Scored, Section | None, bool]]) -> None:
+    """Сколько ошибок и верных ответов пометил бы сомнительными каждый зазор из GAPS."""
     wrong_total = sum(not ok for _, _, ok in doubt_cases)
     print(f"\nУточнение при сомнении (порог {MIN_SIMILARITY}; ошибок «векторы первыми» {wrong_total}):")
     for gap in GAPS:
@@ -113,7 +129,6 @@ async def main() -> int:
                 caught += not ok
                 asked += ok
         print(f"  зазор {gap:.2f}: ошибок переспрошено {caught}/{wrong_total}, верных переспрошено зря {asked}")
-    return 0
 
 
 if __name__ == "__main__":

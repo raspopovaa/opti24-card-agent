@@ -100,10 +100,9 @@ class KnowledgeIndex:
         by_words = rank(self._sections, query)
         doubts = assess(scored, by_words[0][1] if by_words else None, self._min_similarity)
         if doubts:
-            alternatives = [str(item["section"]) for item in found]
-            if by_words and by_words[0][1].heading not in alternatives:
-                alternatives.append(by_words[0][1].heading)
-            result.update(confidence="low", doubts=doubts, alternatives=alternatives[:3])
+            word_top = by_words[0][1].heading if by_words else None
+            alternatives = pick_alternatives([str(item["section"]) for item in found], word_top)
+            result.update(confidence="low", doubts=doubts, alternatives=alternatives)
         return result
 
     async def by_meaning(self, query: str, top: int = 3) -> list[dict[str, str]] | None:
@@ -182,6 +181,20 @@ def assess(
     if word_top is not None and word_top.heading not in near:
         reasons.append("words_disagree")
     return reasons
+
+
+def pick_alternatives(headings: list[str], word_top: str | None, limit: int = 3) -> list[str]:
+    """Разделы на выбор клиенту: найденные, а раздел поиска по словам — сразу вторым.
+
+    Если слова выбрали другой раздел (words_disagree), он и есть главная альтернатива,
+    поэтому не должен выпасть при обрезке до limit.
+    """
+    alternatives = list(headings)
+    if word_top is not None and word_top not in alternatives[:2]:
+        if word_top in alternatives:
+            alternatives.remove(word_top)
+        alternatives.insert(min(1, len(alternatives)), word_top)
+    return alternatives[:limit]
 
 
 def index_path() -> Path | None:

@@ -12,6 +12,7 @@ import pytest
 from agent.config import Mode
 from agent.knowledge import Section, load_sections
 from agent.rag import HashEmbedder, KnowledgeIndex, assess, embedder_from_env
+from agent.rag.index import pick_alternatives
 from tests.test_agent import make_tools
 from tests.test_knowledge import QUESTIONS
 
@@ -170,6 +171,13 @@ def test_assess_flags_weak_match_and_disagreeing_words() -> None:
     assert assess([(0.90, block), (0.60, fee)], fee, 0.52) == []  # слова среди двух лучших
     assert assess([(0.90, block)], fee, 0.52) == ["words_disagree"]
     assert assess([(0.40, block)], fee, 0.52) == []  # векторы молчат: решают слова
+
+
+def test_word_hit_stays_among_alternatives() -> None:
+    assert pick_alternatives(["A", "B", "C"], "D") == ["A", "D", "B"]
+    assert pick_alternatives(["A", "B", "C"], "C") == ["A", "C", "B"]
+    assert pick_alternatives(["A", "B", "C"], "B") == ["A", "B", "C"]
+    assert pick_alternatives(["A"], None) == ["A"]
 
 
 def test_lookup_knowledge_tells_agent_to_ask(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

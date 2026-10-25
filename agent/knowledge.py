@@ -18,6 +18,15 @@ STEM = 5
 MAX_SECTION_CHARS = 1500
 
 MIN_SCORE = 2  # одно случайное слово («Москва») ещё не ответ
+# Слова клиента, которых нет в тексте договора: «потерялась» ищет раздел про блокировку.
+SYNONYMS = {  # ключи — основы по первым пяти буквам
+    "потер": ("заблокировать", "утрата"),
+    "украл": ("заблокировать", "утрата"),
+    "краж": ("заблокировать", "утрата"),
+    "украд": ("заблокировать", "утрата"),
+    "верну": ("возврат",),
+    "вернё": ("возврат",),
+}
 _WORD = re.compile(r"[а-яёa-z0-9]+", re.IGNORECASE)
 _STOP = {
     "как", "какой", "какая", "какие", "что", "где", "когда", "почему", "зачем", "для", "это",
@@ -33,6 +42,7 @@ class Section:
     heading: str
     edition: str
     text: str
+    source: str = ""  # путь или название для ответа; пусто — выжимка из docs/knowledge
 
 
 def _stems(text: str) -> set[str]:
@@ -52,8 +62,28 @@ def _frontmatter(raw: str) -> tuple[dict[str, str], str]:
     return meta, body
 
 
+def load_store_sections(store_dir: Path | None = None) -> list[Section]:
+    """Фрагменты загруженных документов (agent/ingest.py), только действующие версии."""
+    from .ingest import Store
+
+    store = Store(store_dir)
+    # Агент работает от имени клиента: внутренние документы он отдаёт, только если оператор включил это явно.
+    allow = ("public", "internal") if os.environ.get("OPTI24_KNOWLEDGE_INTERNAL", "1") == "1" else ("public",)
+    return [
+        Section(
+            file=doc.id,
+            title=doc.title,
+            heading=chunk["heading"],
+            edition=" ".join(x for x in (doc.version, f"с {doc.valid_from}" if doc.valid_from else "") if x),
+            text=chunk["text"],
+            source=f"{doc.title} ({doc.kind}, {doc.source})",
+        )
+        for doc, chunk in store.active_chunks(allow)
+    ]
+
+
 def load_sections(directory: Path | None = None) -> list[Section]:
-    """Разделы всех выжимок; README и служебные файлы не индексируются."""
+    """Разделы всех выжимок и загруженных документов; README не индексируется."""
     root = directory or Path(os.environ.get("OPTI24_KNOWLEDGE_DIR") or DEFAULT_DIR)
     sections: list[Section] = []
     for path in sorted(root.glob("*.md")):
@@ -71,23 +101,29 @@ def load_sections(directory: Path | None = None) -> list[Section]:
                     text=text.strip(),
                 )
             )
+    if directory is None:  # явная папка в тестах и скриптах читается отдельно, без личного хранилища
+        sections.extend(load_store_sections())
     return sections
 
 
 def search(sections: list[Section], query: str, top: int = 3) -> list[dict[str, str]]:
     """Лучшие разделы по вопросу; пустой список — в базе знаний ответа нет."""
     wanted = _stems(query)
+    for stem in list(wanted):
+        for synonym in SYNONYMS.get(stem, ()):
+            wanted |= _stems(synonym)
     if not wanted:
         return []
     scored = []
     for section in sections:
+        matched = wanted & (_stems(section.heading) | _stems(section.text))
         score = 3 * len(wanted & _stems(section.heading)) + len(wanted & _stems(section.text))
-        if score >= MIN_SCORE:
+        if score >= MIN_SCORE and (len(matched) >= 2 or len(wanted) == 1):
             scored.append((score, section))
     scored.sort(key=lambda pair: -pair[0])
     return [
         {
-            "source": f"docs/knowledge/{section.file}",
+            "source": section.source or f"docs/knowledge/{section.file}",
             "section": section.heading,
             "edition": section.edition,
             "text": section.text[:MAX_SECTION_CHARS],

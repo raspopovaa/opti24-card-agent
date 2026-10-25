@@ -41,17 +41,20 @@ async def main() -> int:
         return 2
     sections = load_sections()
     index = KnowledgeIndex(sections, embedder, index_path())
-    hits = {"words": 0, "hybrid": 0}
+    hits = {"words": 0, "meaning": 0, "hybrid": 0}
     for question, expected in CASES.items():
         words = search(sections, question)
         hybrid, method = await index.search(question)
+        meaning = await index.by_meaning(question) or []
+        top_meaning = meaning[0]["section"] if meaning else "—"
+        hits["meaning"] += top_meaning == expected
         top_words = words[0]["section"] if words else "—"
         top_hybrid = hybrid[0]["section"] if hybrid else "—"
         hits["words"] += top_words == expected
         hits["hybrid"] += top_hybrid == expected
-        print(f"{question}\n  слова: {top_words}\n  {method}: {top_hybrid}")
+        print(f"{question}\n  слова: {top_words}\n  смысл: {top_meaning}\n  {method}: {top_hybrid}")
     print(f"\nМодель {embedder.model}: верно по словам {hits['words']}/{len(CASES)}, "
-          f"гибридно {hits['hybrid']}/{len(CASES)}")
+          f"по смыслу {hits['meaning']}/{len(CASES)}, гибридно {hits['hybrid']}/{len(CASES)}")
     return 0
 
 

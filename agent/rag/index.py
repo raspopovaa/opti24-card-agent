@@ -68,6 +68,11 @@ class KnowledgeIndex:
         best = sorted(merged, key=lambda key: -scores[key])[:top]
         return [as_result(merged[key]) for key in best], "hybrid"
 
+    async def by_meaning(self, query: str, top: int = 3) -> list[dict[str, str]] | None:
+        """Только векторный поиск, без слов: для сравнения моделей. None — модель недоступна."""
+        found = await self._by_meaning(query)
+        return None if found is None else [as_result(section) for section in found[:top]]
+
     async def _by_meaning(self, query: str) -> list[Section] | None:
         if self._embedder is None or not query.strip():
             return None

@@ -15,6 +15,7 @@ import os
 import re
 import time
 from collections.abc import Mapping
+from contextlib import AbstractAsyncContextManager
 from datetime import date
 from html import escape
 from typing import Any, cast
@@ -25,6 +26,7 @@ from .config import Mode, Settings
 from .contract import is_production, open_session, preferred_contract_id
 from .core import FuelCardAgent
 from .dashboard import Dashboard, collect
+from .demo import DEMO_BANNER, demo_client
 from .safety import BillingBudget
 
 CACHE_SECONDS = 60
@@ -332,18 +334,27 @@ async def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m agent.web")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--contract-id")
+    parser.add_argument("--demo", action="store_true", help="демо-режим: синтетический договор, без API Opti24")
     args = parser.parse_args()
 
     settings = Settings.from_env()
     env_file = settings.opti24_env_file
-    conn = ConnectionSettings.from_env(env_file=env_file)
-    production = is_production(conn)
-    async with APIClient(
-        settings=conn, credentials_provider=EnvironmentCredentialsProvider.from_env(env_file=env_file)
-    ) as client:
+    client_cm: AbstractAsyncContextManager[APIClient]
+    if args.demo:
+        client_cm = demo_client()
+        production = False
+    else:
+        conn = ConnectionSettings.from_env(env_file=env_file)
+        production = is_production(conn)
+        client_cm = APIClient(
+            settings=conn, credentials_provider=EnvironmentCredentialsProvider.from_env(env_file=env_file)
+        )
+    async with client_cm as client:
+        if args.demo:
+            print(DEMO_BANNER)
         await open_session(
             client,
-            preferred=args.contract_id or preferred_contract_id(env_file),
+            preferred=None if args.demo else (args.contract_id or preferred_contract_id(env_file)),
             production=production,
             choose=None,
         )

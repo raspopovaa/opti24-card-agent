@@ -24,7 +24,7 @@ from .config import Settings
 from .contract import choose_in_terminal, is_production, open_session, preferred_contract_id
 from .core import FuelCardAgent
 from .dashboard import collect, render
-from .demo import DEMO_BANNER, demo_client
+from .demo import demo_banner, demo_client
 from .providers import PROVIDERS
 
 
@@ -62,7 +62,7 @@ async def main() -> None:
 
     async with client_cm as opti24:
         if args.demo:
-            print(DEMO_BANNER)
+            print(demo_banner())
         await open_session(
             opti24,
             preferred=None if args.demo else (args.contract_id or preferred_contract_id(env_file)),

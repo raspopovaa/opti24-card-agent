@@ -7,11 +7,12 @@
 
 from __future__ import annotations
 
+import os
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from statistics import median
 from typing import Protocol
 
@@ -35,12 +36,55 @@ class Transaction(Protocol):
     is_storno: bool
 
 
+# Пороги по умолчанию; менять можно переменными AGENT_SUSPICIOUS_* или параметрами инструмента.
+DEFAULT_MAX_LITERS = Decimal("650")  # больше литров за одну заправку — требует проверки
+DEFAULT_MAX_FILLS_PER_DAY = 4  # столько заправок по одной карте за день и больше — требует проверки
+
+
 @dataclass(frozen=True, slots=True)
 class AnomalyRules:
     price_tolerance: Decimal = Decimal("0.07")  # дороже медианы по топливу на 7 %
-    max_fills_per_day: int = 2
-    max_liters_per_fill: Decimal = Decimal("150")
+    max_fills_per_day: int = DEFAULT_MAX_FILLS_PER_DAY
+    max_liters_per_fill: Decimal = DEFAULT_MAX_LITERS
     night_hours: range = range(0, 5)  # 00:00–04:59 по местному времени АЗС
+
+
+def _positive_decimal(name: str, raw: str, default: Decimal) -> Decimal:
+    if not raw.strip():
+        return default
+    try:
+        value = Decimal(raw.strip().replace(",", "."))
+    except InvalidOperation:
+        raise ValueError(f"Переменная {name} должна быть числом, а не {raw[:30]!r}") from None
+    if value <= 0:
+        raise ValueError(f"Переменная {name} должна быть больше нуля, а не {raw[:30]!r}")
+    return value
+
+
+def _positive_int(name: str, raw: str, default: int) -> int:
+    if not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        raise ValueError(f"Переменная {name} должна быть целым числом, а не {raw[:30]!r}") from None
+    if value < 1:
+        raise ValueError(f"Переменная {name} должна быть не меньше 1, а не {raw[:30]!r}")
+    return value
+
+
+def anomaly_rules_from_env() -> AnomalyRules:
+    """Пороги из AGENT_SUSPICIOUS_MAX_LITERS и AGENT_SUSPICIOUS_MAX_FILLS_PER_DAY; без них — по умолчанию."""
+    return AnomalyRules(
+        max_liters_per_fill=_positive_decimal(
+            "AGENT_SUSPICIOUS_MAX_LITERS", os.environ.get("AGENT_SUSPICIOUS_MAX_LITERS", ""), DEFAULT_MAX_LITERS
+        ),
+        max_fills_per_day=_positive_int(
+            "AGENT_SUSPICIOUS_MAX_FILLS_PER_DAY",
+            os.environ.get("AGENT_SUSPICIOUS_MAX_FILLS_PER_DAY", ""),
+            DEFAULT_MAX_FILLS_PER_DAY,
+        ),
+    )
 
 
 def _purchases(transactions: Iterable[Transaction]) -> list[Transaction]:
@@ -148,8 +192,11 @@ def find_anomalies(
         if t.timestamp.hour in rules.night_hours:
             reasons.append(f"ночная заправка в {t.timestamp:%H:%M}")
         day = t.timestamp.date().isoformat()
-        if fills_per_day[(t.card_id, day)] > rules.max_fills_per_day:
-            reasons.append(f"{fills_per_day[(t.card_id, day)]} заправки по карте за день")
+        if fills_per_day[(t.card_id, day)] >= rules.max_fills_per_day:
+            reasons.append(
+                f"{fills_per_day[(t.card_id, day)]} заправки по карте за день "
+                f"(порог {rules.max_fills_per_day})"
+            )
         if reasons:
             findings.append(
                 {
@@ -171,7 +218,9 @@ def find_anomalies(
         "rules": {
             "price_tolerance_percent": str(rules.price_tolerance * 100),
             "max_fills_per_day": rules.max_fills_per_day,
+            "fills_per_day_rule": "порог достигается при этом количестве заправок за день и больше",
             "max_liters_per_fill": str(rules.max_liters_per_fill),
+            "liters_rule": "требует проверки больше этого объёма за одну заправку",
             "night_hours": f"{rules.night_hours.start:02d}:00–{rules.night_hours.stop - 1:02d}:59",
         },
     }

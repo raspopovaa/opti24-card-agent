@@ -61,7 +61,7 @@ def test_money_has_no_float_error() -> None:
 
 def test_anomalies_find_expensive_night_and_big_fills() -> None:
     items = [tx(i, 12, "60.00", 40, day=i) for i in range(1, 8)]
-    items += [tx(100, 2, "70.00", 40), tx(101, 12, "60.00", 200, day=9)]
+    items += [tx(100, 2, "70.00", 40), tx(101, 12, "60.00", 700, day=9)]
     result = find_anomalies(items)
     reasons = {f["transaction_id"]: " ".join(f["reasons"]) for f in result["shown"]}
     assert "ночная" in reasons["100"] and "выше медианы" in reasons["100"]
@@ -833,7 +833,7 @@ def test_claude_md_matches_system_prompt() -> None:
 def test_tool_schemas_are_compact() -> None:
     _, _, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=Path("/tmp"))
     size = sum(len(json.dumps(t.to_dict(), ensure_ascii=False)) for t in tools.values())
-    assert size < 18000  # ~5–6 тыс. токенов на 25 схем: описания должны оставаться короткими
+    assert size < 18500  # ~5–6 тыс. токенов на 25 схем: описания должны оставаться короткими (+пороги find_suspicious_fills)
 
 
 def test_mcp_server_exposes_all_tools() -> None:

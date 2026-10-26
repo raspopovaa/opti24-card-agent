@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -11,7 +12,7 @@ from anthropic import beta_async_tool
 from apisdkopti24 import APIError
 from apisdkopti24.errors import RequestValidationError
 
-from ..analysis import AnomalyRules, find_anomalies, purchased_volume, summarize
+from ..analysis import anomaly_rules_from_env, find_anomalies, purchased_volume, summarize
 from ..analysis import fuel_price_analytics as price_analytics
 from ..decline_codes import decode as decode_decline
 from ..money import rub, to_decimal
@@ -227,24 +228,42 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         )
 
     @beta_async_tool
-    async def find_suspicious_fills(date_from: str, date_to: str, card_id: str | None = None) -> str:
+    async def find_suspicious_fills(
+        date_from: str,
+        date_to: str,
+        card_id: str | None = None,
+        max_liters: float | None = None,
+        max_fills_per_day: int | None = None,
+    ) -> str:
         """Подозрительные заправки за период: дорогие, ночные, крупные, частые.
 
-        Тарифный запрос API: 1 запрос на каждую страницу из 100 операций; за
-        период, уже загруженный spending_report, бесплатно.
+        Тарифный запрос API: 1 запрос на страницу из 100 операций; за период,
+        уже загруженный spending_report, бесплатно. Пороги: max_liters, max_fills_per_day.
 
         Args:
             date_from: Начало периода, ГГГГ-ММ-ДД.
             date_to: Конец периода, ГГГГ-ММ-ДД.
-            card_id: Ограничить одной картой (необязательно).
+            card_id: Ограничить одной картой.
         """
         if problem := _check_dates(date_from, date_to):
             return _json({"error": "bad_dates", "message": problem})
         try:
+            rules = anomaly_rules_from_env()
+            if max_liters is not None:
+                if max_liters <= 0:
+                    return _json({"error": "bad_threshold", "message": "max_liters должен быть больше нуля."})
+                rules = replace(rules, max_liters_per_fill=Decimal(format(Decimal(str(max_liters)).normalize(), "f")))
+            if max_fills_per_day is not None:
+                if max_fills_per_day < 1:
+                    return _json({"error": "bad_threshold", "message": "max_fills_per_day должен быть не меньше 1."})
+                rules = replace(rules, max_fills_per_day=max_fills_per_day)
+        except ValueError as exc:
+            return _json({"error": "bad_threshold", "message": str(exc)})
+        try:
             items = await transactions(date_from, date_to, card_id)
         except (APIError, BudgetExceededError, RequestValidationError, TransactionsUnavailableError) as exc:
             return _error(exc)
-        return _json({**find_anomalies(items, AnomalyRules()), **source(date_from, date_to, card_id)})
+        return _json({**find_anomalies(items, rules), **source(date_from, date_to, card_id)})
 
     @beta_async_tool
     async def diagnose_fueling(

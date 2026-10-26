@@ -25,7 +25,7 @@ from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 
-from .analysis import AnomalyRules, charts, find_anomalies, summarize
+from .analysis import anomaly_rules_from_env, charts, find_anomalies, summarize
 from .config import Settings
 from .contract import choose_in_terminal, is_production, open_session, preferred_contract_id
 from .money import rub, to_decimal
@@ -106,7 +106,7 @@ async def collect(
         board.month["Операций (покупок)"] = str(summary["operations"])
         board.month["Топливо"] = summary["by_product"]
         board.month["Топ карт"] = summary["top_cards"]
-        anomalies = find_anomalies(items, AnomalyRules(), top=5)
+        anomalies = find_anomalies(items, anomaly_rules_from_env(), top=5)
         board.control = {
             "Проверено операций": anomalies["checked_operations"],
             "Подозрительных": anomalies["suspicious_total"],

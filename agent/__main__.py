@@ -7,6 +7,7 @@
     python -m agent --provider yandex            # YANDEX_API_KEY и YANDEX_FOLDER_ID
     python -m agent --provider ollama --model qwen3:8b   # локально, бесплатно
     python -m agent --no-dashboard
+    python -m agent --demo                       # синтетический договор, без ключа Opti24
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+from contextlib import AbstractAsyncContextManager
 from datetime import date
 
 from apisdkopti24 import APIClient, ConnectionSettings, EnvironmentCredentialsProvider
@@ -22,6 +24,7 @@ from .config import Settings
 from .contract import choose_in_terminal, is_production, open_session, preferred_contract_id
 from .core import FuelCardAgent
 from .dashboard import collect, render
+from .demo import DEMO_BANNER, demo_client
 from .providers import PROVIDERS
 
 
@@ -36,6 +39,7 @@ def _parse() -> argparse.Namespace:
     parser.add_argument("--model", help="имя модели (по умолчанию — дешёвая модель провайдера)")
     parser.add_argument("--contract-id", help="ID договора (иначе из AGENT_CONTRACT_ID, .env или выбор)")
     parser.add_argument("--no-dashboard", action="store_true", help="не показывать дашборд")
+    parser.add_argument("--demo", action="store_true", help="демо-режим: синтетический договор, без API Opti24")
     return parser.parse_args()
 
 
@@ -48,14 +52,21 @@ async def main() -> None:
         os.environ["AGENT_MODEL"] = args.model
     settings = Settings.from_env()
     env_file = settings.opti24_env_file
-    conn = ConnectionSettings.from_env(env_file=env_file)
-    credentials = EnvironmentCredentialsProvider.from_env(env_file=env_file)
+    client_cm: AbstractAsyncContextManager[APIClient]
+    if args.demo:
+        client_cm = demo_client()
+    else:
+        conn = ConnectionSettings.from_env(env_file=env_file)
+        credentials = EnvironmentCredentialsProvider.from_env(env_file=env_file)
+        client_cm = APIClient(settings=conn, credentials_provider=credentials)
 
-    async with APIClient(settings=conn, credentials_provider=credentials) as opti24:
+    async with client_cm as opti24:
+        if args.demo:
+            print(DEMO_BANNER)
         await open_session(
             opti24,
-            preferred=args.contract_id or preferred_contract_id(env_file),
-            production=is_production(conn),
+            preferred=None if args.demo else (args.contract_id or preferred_contract_id(env_file)),
+            production=False if args.demo else is_production(conn),
             choose=choose_in_terminal,
         )
         agent = FuelCardAgent(settings=settings, opti24=opti24, ask_human=_confirm)

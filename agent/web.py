@@ -26,7 +26,7 @@ from .config import Mode, Settings
 from .contract import is_production, open_session, preferred_contract_id
 from .core import FuelCardAgent
 from .dashboard import Dashboard, collect
-from .demo import DEMO_BANNER, demo_client
+from .demo import demo_banner, demo_client
 from .safety import BillingBudget
 
 CACHE_SECONDS = 60
@@ -351,7 +351,7 @@ async def main() -> None:
         )
     async with client_cm as client:
         if args.demo:
-            print(DEMO_BANNER)
+            print(demo_banner())
         await open_session(
             client,
             preferred=None if args.demo else (args.contract_id or preferred_contract_id(env_file)),

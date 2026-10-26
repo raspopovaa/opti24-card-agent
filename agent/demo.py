@@ -6,13 +6,19 @@
 с магистральными тягачами и городскими фургонами, операции с начала прошлого месяца,
 лимиты, правила и несколько заправок, которые требуют проверки.
 
-Данные одинаковы при каждом запуске (фиксированный seed) и сдвигаются вместе с сегодняшней
-датой. Изменения (блокировка, лимиты, комментарии) живут только в памяти процесса.
+Операции лежат в отдельной демо-базе (``data/demo.db``, ``AGENT_DEMO_DB_PATH``): при запуске
+она создаётся заново из синтетики, и агент, и дашборд читают операции только из неё. Рабочая
+база агента (``data/agent.db``) в демо не открывается. Данные одинаковы при каждом запуске
+(фиксированный seed) и сдвигаются вместе с сегодняшней датой.
+
+Изменения (блокировка, комментарии, лимиты, правила, заказ отчёта) демо не выполняет: агент
+показывает подтверждение и отвечает, что изменение не отправлено (см. ``confirm_write``).
 Ни одного запроса к Opti24 демо-режим не делает; модель при этом нужна настоящая.
 """
 
 from __future__ import annotations
 
+import os
 import random
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -24,11 +30,17 @@ from types import SimpleNamespace as NS
 from typing import Any, cast
 
 from apisdkopti24 import APIClient
+from apisdkopti24.models.transactions import TransactionItemV2
+
+from .db import OperationStore
 
 DEMO_CONTRACT_ID = "demo-contract"
 DEMO_CONTRACT_NUMBER = "ДЕМО-2026/01"
 DEMO_ORG = "ООО «Демо Логистик» (выдуманная компания)"
 DEMO_NOTE = "Демо-режим: синтетический договор, данные выдуманы, запросов к Opti24 нет."
+DEMO_DB_PATH = Path("data/demo.db")
+# Демо-база не устаревает: её операции не приходят из API, а пересоздаются при запуске.
+DEMO_TTL = timedelta(days=3650)
 
 # Справочники. Коды выдуманы: настоящие коды берите в get_dictionary рабочего договора.
 PRODUCT_TYPES = {
@@ -95,13 +107,26 @@ CARDS = [
 GROUPS = {"g-long": "Магистраль", "g-city": "Город"}
 
 
+class DemoWriteError(RuntimeError):
+    """Демо не меняет данные: изменения перехватывает confirm_write до вызова API."""
+
+
+def demo_db_path() -> Path:
+    """Файл демо-базы из AGENT_DEMO_DB_PATH, по умолчанию data/demo.db."""
+    return Path(os.environ.get("AGENT_DEMO_DB_PATH", "").strip() or DEMO_DB_PATH).expanduser()
+
+
 class SyntheticOpti24:
-    """Поддельный клиент Opti24 с синтетическим договором; интерфейс как у APIClient."""
+    """Поддельный клиент Opti24 с синтетическим договором; интерфейс как у APIClient.
+
+    Операции хранятся только в демо-базе ``demo_store``: методы операций читают их оттуда.
+    ``db_path=None`` — база в памяти (для тестов).
+    """
 
     contract_id = DEMO_CONTRACT_ID
     synthetic = True
 
-    def __init__(self, today: date | None = None, seed: int = 24) -> None:
+    def __init__(self, today: date | None = None, seed: int = 24, db_path: Path | None = None) -> None:
         self.today = today or date.today()
         self._rng = random.Random(seed)
         self._next_id = 1
@@ -113,7 +138,7 @@ class SyntheticOpti24:
         # Карта потеряна и заблокирована клиентом; у другой три неверных PIN подряд — для разбора отказа.
         self.cards_state["c-10"]["status"] = "Locked(Client)"
         self.cards_state["c-08"]["pin_counter"] = 3
-        self.operations = self._generate_transactions()
+        self.demo_store = self._build_db(db_path, self._generate_transactions())
         self.limit_rules: dict[str, Any] = {}
         self.region_rules: dict[str, Any] = {}
         self.restriction_rules: dict[str, Any] = {}
@@ -129,23 +154,20 @@ class SyntheticOpti24:
             get_documents=self._documents,
         )
         self.card_groups = NS(get_card_groups=self._card_groups)
+        write = self._write_disabled
         self.cards = NS(
             get_cards_v2=self._cards_v2,
             get_card_detail=self._card_detail,
             get_card_drivers=self._card_drivers,
-            block_card=self._block_card,
-            set_card_comment=self._set_card_comment,
+            block_card=write,
+            set_card_comment=write,
         )
-        self.limits = NS(get_limits=self._get_limits, set_limit=self._set_limit, remove_limit=self._remove_limit)
+        self.limits = NS(get_limits=self._get_limits, set_limit=write, remove_limit=write)
         self.region_limits = NS(
-            get_region_limits=self._get_region_limits,
-            set_region_limit=self._set_region_limit,
-            remove_region_limit=self._remove_region_limit,
+            get_region_limits=self._get_region_limits, set_region_limit=write, remove_region_limit=write
         )
         self.restrictions = NS(
-            get_restrictions=self._get_restrictions,
-            set_restriction=self._set_restriction,
-            remove_restriction=self._remove_restriction,
+            get_restrictions=self._get_restrictions, set_restriction=write, remove_restriction=write
         )
         self.transactions = NS(
             get_transactions_v2=self._transactions_v2,
@@ -155,7 +177,7 @@ class SyntheticOpti24:
         self.dictionaries = NS(get_dictionary=self._dictionary, get_azs_list_v1=self._azs_list)
         self.final_prices = NS(check_purchase=self._check_purchase)
         self.reports = NS(
-            order_report_v1=self._order_report,
+            order_report_v1=write,
             get_report_job_list_v1=self._report_jobs,
             download_report_file_v1_to=self._download_report,
         )
@@ -171,18 +193,26 @@ class SyntheticOpti24:
         price = station.prices[fuel]
         discount = (liters * DISCOUNT_PER_LITER).quantize(Decimal("0.01"))
         amount = (price * liters - discount).quantize(Decimal("0.01"))
-        return NS(
+        return TransactionItemV2(
             id=self._new_id("t"),
             timestamp=when,
+            utc_time=when - timedelta(hours=3),
             card_id=card_id,
-            card_number=self.cards_state[card_id]["number"],
+            card_number=str(self.cards_state[card_id]["number"]),
             poi_id=station.id,
             terminal_id=f"{station.id}-1",
             check_id=str(self._next_id),
+            stor_transaction_id=None,
             type="P",
+            product_id=f"DEMO-{fuel}",
             product_name=GOODS[fuel],
+            product_category_id="DEMO-FUEL",
+            currency="RUB",
+            payment_type="card",
+            exchange_rate="1",
             qty=float(liters),
             price=str(price),
+            price_no_discount=str(price),
             sum=str(amount),
             sum_no_discount=str((price * liters).quantize(Decimal("0.01"))),
             discount=str(discount),
@@ -192,7 +222,7 @@ class SyntheticOpti24:
 
     def _generate_transactions(self) -> list[Any]:
         rng = self._rng
-        start = (self.today.replace(day=1) - timedelta(days=1)).replace(day=1)
+        start = self._start()
         days = (self.today - start).days
         regular = [s for s in STATIONS if s.id != "poi-777"]
         items: list[Any] = []
@@ -219,11 +249,34 @@ class SyntheticOpti24:
             self._fill("c-09", datetime.combine(mid, time(17, 45)), regular[2], Decimal("47")),  # 3 раза за день
         ]
         storno = self._fill("c-02", datetime.combine(mid, time(11, 0)), regular[3], Decimal("300"))
-        reverse = NS(**{**storno.__dict__, "id": self._new_id("t"), "is_storno": True,
-                        "qty": -storno.qty, "sum": f"-{storno.sum}", "discount": f"-{storno.discount}",
-                        "sum_no_discount": f"-{storno.sum_no_discount}"})
+        reverse = storno.model_copy(update={
+            "id": self._new_id("t"), "is_storno": True, "stor_transaction_id": storno.id, "qty": -storno.qty,
+            "sum": f"-{storno.sum}", "discount": f"-{storno.discount}",
+            "sum_no_discount": f"-{storno.sum_no_discount}",
+        })
         items += [storno, reverse]
         return sorted(items, key=lambda t: t.timestamp)
+
+    def _start(self) -> date:
+        """Первый день операций демо: начало прошлого месяца."""
+        return (self.today.replace(day=1) - timedelta(days=1)).replace(day=1)
+
+    def _build_db(self, path: Path | None, items: list[Any]) -> OperationStore:
+        """Демо-база заново: операции с начала прошлого месяца, период отмечен загруженным до конца месяца."""
+        if path is not None and path.exists():
+            path.unlink()  # демо-база своя и пересоздаётся при каждом запуске
+        store = OperationStore(path or Path(":memory:"), DEMO_CONTRACT_ID, DEMO_TTL)
+        month_end = (self.today.replace(day=1) + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+        raw = [item.model_dump(mode="json", by_alias=True) for item in items]
+        store.save(self._start(), month_end, None, raw, datetime.combine(self.today, time()))
+        return store
+
+    def _ops(self, date_from: date, date_to: date, card_id: str | None = None) -> list[TransactionItemV2]:
+        """Операции из демо-базы: другого источника операций у демо нет."""
+        return [TransactionItemV2.model_validate(raw) for raw in self.demo_store.read(date_from, date_to, card_id)]
+
+    async def _write_disabled(self, **_: object) -> Any:
+        raise DemoWriteError("Демо-режим не меняет данные: изменение не отправлено.")
 
     def _seed_rules(self) -> None:
         for cid, *_ in CARDS:
@@ -246,9 +299,7 @@ class SyntheticOpti24:
     def _week_used(self, card_id: str | None, group_id: str | None, liters: bool) -> Decimal:
         since = self.today - timedelta(days=self.today.weekday())
         total = Decimal(0)
-        for t in self.operations:
-            if t.timestamp.date() < since:
-                continue
+        for t in self._ops(since, self.today):
             state = self.cards_state[t.card_id]
             if (card_id and t.card_id != card_id) or (group_id and state["group"] != group_id):
                 continue
@@ -285,8 +336,8 @@ class SyntheticOpti24:
     def _month_spent(self) -> tuple[Decimal, Decimal, Decimal]:
         first = self.today.replace(day=1)
         prev_first = (first - timedelta(days=1)).replace(day=1)
-        month = [t for t in self.operations if t.timestamp.date() >= first]
-        prev = [t for t in self.operations if prev_first <= t.timestamp.date() < first]
+        month = self._ops(first, self.today)
+        prev = self._ops(prev_first, first - timedelta(days=1))
         spent = sum((Decimal(t.sum) for t in month), Decimal(0))
         liters = sum((Decimal(str(t.qty)) for t in month), Decimal(0))
         prev_liters = sum((Decimal(str(t.qty)) for t in prev), Decimal(0))
@@ -362,7 +413,7 @@ class SyntheticOpti24:
         if card_id not in self.cards_state:
             return NS(data=NS(result=[], total_count=0))
         state = self.cards_state[card_id]
-        last = next((t for t in reversed(self.operations) if t.card_id == card_id), None)
+        last = next(reversed(self._ops(self._start(), self.today, card_id)), None)
         station = next((s.name for s in STATIONS if last and s.id == last.poi_id), None)
         item = NS(id=card_id, number=state["number"], status=state["status"], comment=state["comment"],
                   product="limit", carrier="Plastic", available=None, currency="RUB",
@@ -378,20 +429,6 @@ class SyntheticOpti24:
         item = NS(last_name=last, first_name=first, middle_name=None, position="Водитель", role="Driver",
                   mobile_phone=f"+7 900 000-{card_id[-2:]}-{card_id[-2:]}")
         return NS(data=NS(result=[item], total_count=1))
-
-    async def _block_card(self, *, card_ids: list[str], block: bool, **_: object) -> Any:
-        done = [cid for cid in card_ids if cid in self.cards_state]
-        for cid in done:
-            self.cards_state[cid]["status"] = "Locked(Client)" if block else "Active"
-        self.queries_used += 1
-        return NS(data=done)
-
-    async def _set_card_comment(self, *, card_id: str, comment: str, **_: object) -> Any:
-        if card_id not in self.cards_state:
-            return NS(data=False)
-        self.cards_state[card_id]["comment"] = comment
-        self.queries_used += 1
-        return NS(data=True)
 
     async def _card_groups(self, **_: object) -> Any:
         items = [NS(id=gid, name=name, cards_count=sum(1 for c in self.cards_state.values() if c["group"] == gid))
@@ -412,45 +449,11 @@ class SyntheticOpti24:
         items = [r for r in self._owned(self.limit_rules, card_id, group_id) if not card_id or r.card_id == card_id]
         return NS(data=NS(result=items, total_count=len(items)))
 
-    async def _set_limit(self, *, limits: list[Any], **_: object) -> Any:
-        ids = []
-        for item in limits:
-            lid = item.id or self._new_id("l")
-            self.limit_rules[lid] = self._limit(
-                lid, item.card_id, item.group_id, item.product_type,
-                liters=Decimal(str(item.amount.value)) if item.amount else None,
-                rubles=Decimal(str(item.sum.value)) if item.sum else None,
-                period=(item.time.number, item.time.type), product_group=item.product_group,
-                count=item.transactions.count if item.transactions else None,
-            )
-            ids.append(lid)
-        self.queries_used += 1
-        return NS(data=ids)
-
-    async def _remove_limit(self, *, limit_id: str, **_: object) -> Any:
-        self.queries_used += 1
-        return NS(data=self.limit_rules.pop(limit_id, None) is not None)
-
     async def _get_region_limits(self, *, card_id: str | None = None, group_id: str | None = None,
                                  **_: object) -> Any:
         items = self._owned(self.region_rules, card_id, group_id)
         self.queries_used += 1
         return NS(data=NS(result=items, total_count=len(items)))
-
-    async def _set_region_limit(self, *, region_limits: list[Any], **_: object) -> Any:
-        ids = []
-        for item in region_limits:
-            rid = item.id or self._new_id("r")
-            self.region_rules[rid] = NS(id=rid, card_id=item.card_id, group_id=item.group_id, country=item.country,
-                                         region=item.region, service_center=item.service_center,
-                                         partner=item.partner, limit_type=item.limit_type, date=str(self.today))
-            ids.append(rid)
-        self.queries_used += 1
-        return NS(data=ids)
-
-    async def _remove_region_limit(self, *, regionlimit_id: str, **_: object) -> Any:
-        self.queries_used += 1
-        return NS(data=self.region_rules.pop(regionlimit_id, None) is not None)
 
     async def _get_restrictions(self, *, card_id: str | None = None, group_id: str | None = None,
                                 **_: object) -> Any:
@@ -458,29 +461,11 @@ class SyntheticOpti24:
         self.queries_used += 1
         return NS(data=NS(result=items, total_count=len(items)))
 
-    async def _set_restriction(self, *, restrictions: list[Any], **_: object) -> Any:
-        ids = []
-        for item in restrictions:
-            sid = item.id or self._new_id("s")
-            self.restriction_rules[sid] = NS(id=sid, card_id=item.card_id, group_id=item.group_id,
-                                        productType=item.product_type,
-                                        productTypeName=PRODUCT_TYPES.get(str(item.product_type)),
-                                        productGroup=item.product_group, productGroupName=None,
-                                        restriction_type=item.restriction_type, date=str(self.today))
-            ids.append(sid)
-        self.queries_used += 1
-        return NS(data=ids)
-
-    async def _remove_restriction(self, *, restriction_id: str, **_: object) -> Any:
-        self.queries_used += 1
-        return NS(data=self.restriction_rules.pop(restriction_id, None) is not None)
-
     # --- операции, справочники, отчёты ---------------------------------------------------------
 
     def _period(self, date_from: object, date_to: object, card_id: str | None = None) -> list[Any]:
-        lo, hi = str(date_from)[:10], str(date_to)[:10]
-        return [t for t in self.operations
-                if lo <= t.timestamp.date().isoformat() <= hi and (card_id is None or t.card_id == card_id)]
+        lo, hi = date.fromisoformat(str(date_from)[:10]), date.fromisoformat(str(date_to)[:10])
+        return self._ops(lo, hi, card_id)
 
     async def _transactions_v2(self, *, date_from: object, date_to: object, page_limit: int = 100,
                                page_offset: int = 0, **_: object) -> Any:
@@ -495,7 +480,8 @@ class SyntheticOpti24:
         return NS(data=NS(result=items[page_offset:page_offset + page_limit], total_count=len(items)))
 
     async def _transaction_detail(self, *, transaction_id: object, **_: object) -> Any:
-        items = [t for t in self.operations if str(t.id) == str(transaction_id)]
+        raw = self.demo_store.by_id(str(transaction_id))
+        items = [TransactionItemV2.model_validate(raw)] if raw else []
         return NS(data=NS(result=items, total_count=len(items)))
 
     async def _dictionary(self, *, name: str, **_: object) -> Any:
@@ -518,14 +504,6 @@ class SyntheticOpti24:
         state = self.cards_state.get(card_id, {})
         return NS(data=bool(state) and state["status"] == "Active" and state["pin_counter"] < 3)
 
-    async def _order_report(self, **kwargs: object) -> Any:
-        job = NS(job_id=self._new_id("job"), date=str(self.today), report_name="Транзакционный отчёт (демо)",
-                 report_format=str(kwargs.get("report_format") or "csv"), contract_id=DEMO_CONTRACT_ID,
-                 client_id="demo", user_id="demo", period=(kwargs.get("start"), kwargs.get("end")))
-        self.report_jobs.append(job)
-        self.queries_used += 1
-        return NS(data=[job.job_id])
-
     async def _report_jobs(self, **_: object) -> Any:
         return NS(data=list(self.report_jobs))
 
@@ -542,10 +520,12 @@ class SyntheticOpti24:
         return destination.with_suffix(".csv")
 
 
-DEMO_BANNER = (
-    "ДЕМО: синтетический договор «ДЕМО-2026/01», данные выдуманы, запросов к Opti24 нет. "
-    "Изменения живут только в памяти этого запуска."
-)
+def demo_banner() -> str:
+    """Строка при запуске демо: что за данные и где демо-база."""
+    return (
+        f"ДЕМО: синтетический договор «{DEMO_CONTRACT_NUMBER}», данные выдуманы, запросов к Opti24 нет. "
+        f"Операции — из демо-базы {demo_db_path()}; изменения карт и правил в демо не выполняются."
+    )
 
 
 @asynccontextmanager
@@ -554,4 +534,8 @@ async def demo_client() -> AsyncIterator[APIClient]:
 
     Приведение типа нужно только для агента и дашборда: они принимают APIClient, а методы здесь те же.
     """
-    yield cast(APIClient, SyntheticOpti24())
+    demo = SyntheticOpti24(db_path=demo_db_path())
+    try:
+        yield cast(APIClient, demo)
+    finally:
+        demo.demo_store.close()

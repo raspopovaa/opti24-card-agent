@@ -75,14 +75,24 @@ class OperationStore:
         loaded_at = self._loaded_at(date_from, date_to, card_id)
         if loaded_at is None or not _usable(loaded_at, date_to, now, self._ttl):
             return None
+        return Snapshot(self.read(date_from, date_to, card_id), loaded_at)
 
+    def read(self, date_from: date, date_to: date, card_id: str | None = None) -> list[dict[str, Any]]:
+        """Операции из базы за дни периода, без проверки, загружен ли он целиком."""
         query = "SELECT raw FROM operations WHERE contract_key = ? AND local_day BETWEEN ? AND ?"
         params: list[str] = [self._key, date_from.isoformat(), date_to.isoformat()]
         if card_id:
             query += " AND card_id = ?"
             params.append(card_id)
         rows = self._db.execute(query + " ORDER BY local_day, id", params).fetchall()
-        return Snapshot([json.loads(raw) for (raw,) in rows], loaded_at)
+        return [json.loads(raw) for (raw,) in rows]
+
+    def by_id(self, operation_id: str) -> dict[str, Any] | None:
+        """Операция по ID или None."""
+        row = self._db.execute(
+            "SELECT raw FROM operations WHERE contract_key = ? AND id = ?", (self._key, operation_id)
+        ).fetchone()
+        return None if row is None else json.loads(row[0])
 
     def save(
         self,

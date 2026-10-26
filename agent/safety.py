@@ -126,7 +126,7 @@ class ApprovalGate:
         return self._decision(action, objects, target, args, (False, "read_only"))
 
     def outcome(self, approval: Approval, status: str, detail: Mapping[str, object] | None = None) -> None:
-        """Исход подтверждённого изменения: done, partial, not_done, error или unknown."""
+        """Исход подтверждённого изменения: done, partial, not_done, error, unknown или demo_not_sent."""
         self._write(
             {"id": approval.id, "event": "outcome", "action": approval.action, "status": status, **(detail or {})}
         )

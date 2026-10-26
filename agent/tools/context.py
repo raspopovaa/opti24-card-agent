@@ -79,7 +79,10 @@ def make_context(
     reports_dir: Path | None = None,
     store: OperationStore | None | bool = True,
 ) -> ToolContext:
-    """store=True — база из AGENT_DB_PATH (см. agent.db.open_store), None/False — без базы."""
+    """store=True — база из AGENT_DB_PATH (см. agent.db.open_store), None/False — без базы.
+
+    У демо-клиента своя база (``demo_store``): рабочая база агента в демо не открывается.
+    """
 
     reports_root = Path(
         reports_dir or os.environ.get("AGENT_REPORTS_DIR", "reports")
@@ -138,6 +141,9 @@ def make_context(
     # Откуда взяты операции периода: из локальной базы (и на какой момент) или из API.
     tx_source: dict[tuple[str, str, str | None], dict[str, str]] = {}
     # Договор становится известен после входа в API, поэтому база открывается при первом вопросе.
+    demo = bool(getattr(client, "synthetic", False))
+    if demo and store is True:
+        store = getattr(client, "demo_store", None)
     opened: dict[str, OperationStore | None] = {} if store is True else {"store": store or None}
 
     def operation_store() -> OperationStore | None:
@@ -325,6 +331,17 @@ def make_context(
         if not approval:
             return None, _json(
                 {"status": "declined", "message": "Пользователь не подтвердил действие: данные не тронуты."}
+            )
+        if demo:
+            # Демо показывает путь изменения до подтверждения, но в API и демо-данные ничего не уходит.
+            gate.outcome(approval, "demo_not_sent")
+            return None, _json(
+                {
+                    "status": "demo_not_sent",
+                    "message": "Демо-режим: изменение подтверждено, но не отправлено, данные демо-договора "
+                    "не менялись. Так и скажи пользователю и не говори, что изменение выполнено. В рабочем "
+                    f"режиме (AGENT_MODE=confirm) после подтверждения оператор получил бы: {summary}",
+                }
             )
         return approval, None
 

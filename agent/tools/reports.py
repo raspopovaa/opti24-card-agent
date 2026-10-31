@@ -10,9 +10,21 @@ from anthropic import beta_async_tool
 from apisdkopti24 import APIError
 from apisdkopti24.errors import ContractSelectionError, RequestValidationError
 
+from ..analysis import anomaly_rules_from_env
+from ..fuel_report import ReportFormatError, summarize_file
 from ..safety import BudgetExceededError
 from .common import _check_dates, _error, _json, mask_email
 from .context import ToolContext
+
+
+def _summary(saved: Path, fmt: str) -> dict[str, Any]:
+    """Сводка скачанного отчёта для модели: считается только по csv."""
+    if fmt != "csv":
+        return {"summary_unavailable": "Сводку агент считает только по отчёту csv; этот файл не разобран."}
+    try:
+        return {"summary": summarize_file(saved, anomaly_rules_from_env())}
+    except (ReportFormatError, OSError, UnicodeDecodeError, ValueError) as exc:
+        return {"summary_unavailable": f"Файл сохранён, но не разобран: {exc}"}
 
 
 def build(ctx: ToolContext) -> dict[str, Any]:
@@ -69,6 +81,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
 
         Асинхронно: вернёт job_id для get_report_status. format: xlsx, xml, pdf
         или csv. С email отчёт уйдёт на почту, без него — по ссылке в кабинете.
+        Сводку со сбором и наценками агент считает только по csv.
         """
         if problem := _check_dates(date_from, date_to):
             return _json({"error": "bad_dates", "message": problem})
@@ -141,7 +154,9 @@ def build(ctx: ToolContext) -> dict[str, Any]:
 
         Сначала проверь get_report_status: job_id должен быть готов. Файл
         сохраняется локально и не вставляется в чат. report_format нужен только
-        для расширения; destination — имя файла без пути.
+        для расширения; destination — имя файла без пути. Для csv в ответе summary:
+        сервисный сбор по факту, цена литра со сбором, наценки к цене стелы,
+        возвраты и сигналы для проверки.
         """
         job_id = str(job_id).strip()
         if not job_id:
@@ -174,14 +189,14 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             )
         except (APIError, BudgetExceededError, RequestValidationError, OSError) as exc:
             return _error(exc)
-        return _json(
-            {
-                "status": "downloaded",
-                "job_id": job_id,
-                "path": str(saved),
-                "bytes": saved.stat().st_size if saved.exists() else None,
-            }
-        )
+        result: dict[str, Any] = {
+            "status": "downloaded",
+            "job_id": job_id,
+            "path": str(saved),
+            "bytes": saved.stat().st_size if saved.exists() else None,
+        }
+        result.update(_summary(saved, fmt))
+        return _json(result)
 
     return {
         "get_report_status": get_report_status,

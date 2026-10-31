@@ -13,7 +13,7 @@ from ..money import rub, to_decimal
 from ..pricing import TERMS_EDITION, service_fee_for_volume
 from ..safety import BudgetExceededError
 from .common import _check_dates, _doc_date, _error, _iso, _json, _rub_optional
-from .context import ToolContext
+from .context import ToolContext, cached_auth
 
 
 def build(ctx: ToolContext) -> dict[str, Any]:
@@ -34,7 +34,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         """
         try:
             contract_id = getattr(client, "contract_id", None)
-            auth = await client.auth.auth_user(contract_id=contract_id)
+            auth = await cached_auth(client, lambda cid: client.auth.auth_user(contract_id=cid))
             info = (await client.auth.get_info()).data
         except (APIError, RequestValidationError, ContractSelectionError, BudgetExceededError) as exc:
             return _error(exc)

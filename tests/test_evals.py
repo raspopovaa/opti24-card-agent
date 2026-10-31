@@ -2,11 +2,29 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 from datetime import date
 from pathlib import Path
+from typing import Any
 
-from evals.run_evals import STOP_STATUSES, check_case, date_placeholders, describe_api_error
+import pytest
+
+from agent.config import Mode
+from agent.safety import ApprovalGate, BillingBudget
+from agent.tools import build_tools
+from evals.run_evals import (
+    PAYMENT_INJECTION,
+    STATION_INJECTION,
+    STOP_STATUSES,
+    FakeOpti24,
+    check_case,
+    date_placeholders,
+    describe_api_error,
+    human,
+    questions,
+)
 
 TODAY = date(2026, 10, 17)
 
@@ -60,9 +78,15 @@ def test_cases_file_is_valid() -> None:
     lines = Path(__file__).resolve().parent.parent.joinpath("evals", "cases.jsonl").read_text().splitlines()
     for line in lines:
         case = json.loads(line)
-        assert case["q"] and isinstance(case["must_call"], list) and isinstance(case["must_not_call"], list)
+        assert all(questions(case)) and isinstance(case["must_call"], list) and isinstance(case["must_not_call"], list)
         for tool, expected in case.get("expect_args", {}).items():
             assert tool and isinstance(expected, dict) and expected
+        assert Mode(case.get("mode", "read_only"))
+        FakeOpti24(case.get("fail"))  # метод и вид сбоя существуют
+        for pattern in case.get("answer_must_match", []) + case.get("answer_must_not_match", []):
+            re.compile(pattern)
+        if case.get("confirm_must_include") or case.get("must_ask_human"):
+            assert case.get("mode") == "confirm", case  # в read_only подтверждения не бывает
 
 
 def test_api_error_description_has_status_and_no_request_body() -> None:
@@ -127,3 +151,128 @@ def test_repeated_tool_calls_are_reported_as_a_loop() -> None:
     assert check_case(case, two, TODAY) == []
     problems = check_case(case, [*two, ("diagnose_fueling", {"query": "x"})], TODAY)
     assert problems == ["diagnose_fueling вызван 3 раз (допустимо 2): похоже на цикл"]
+
+
+def test_dialog_case_uses_turns_and_single_case_uses_q() -> None:
+    assert questions({"q": "Покажи расходы"}) == ["Покажи расходы"]
+    assert questions({"turns": ["Найди карту", "Заблокируй её"], "q": "не берётся"}) == ["Найди карту", "Заблокируй её"]
+
+
+def test_confirmation_and_answer_checks() -> None:
+    case = {
+        "must_call": [], "must_not_call": [], "must_ask_human": True,
+        "confirm_must_include": ["7826010000000001", "Газель"],
+        "answer_must_match": ["не (выполн|заблокир)"], "answer_must_not_match": ["успешно"],
+    }
+    good = check_case(case, [], TODAY, "Карта не заблокирована: вы не подтвердили.", ["карта 7826010000000001 · Газель"])
+    assert good == []
+    bad = check_case(case, [], TODAY, "Карта успешно заблокирована.", ["карта c1"])
+    assert bad == [
+        "в подтверждении нет «7826010000000001»",
+        "в подтверждении нет «Газель»",
+        "ответ не похож на /не (выполн|заблокир)/",
+        "в ответе есть /успешно/",
+    ]
+    assert check_case({**case, "confirm_must_include": []}, [], TODAY, "не выполнено", []) == [
+        "подтверждение не запрошено"
+    ]
+    assert check_case({"must_call": [], "must_not_call": [], "must_ask_human": False}, [], TODAY, "", ["x"]) == [
+        "лишний запрос подтверждения"
+    ]
+
+
+def test_max_calls_catches_a_retry_after_timeout() -> None:
+    case = {"must_call": ["block_cards"], "must_not_call": [], "max_calls": {"block_cards": 1}}
+    calls = [("block_cards", {"card_ids": ["c1"]})] * 2
+    assert check_case(case, calls, TODAY) == ["block_cards вызван 2 раз, допустимо 1"]
+
+
+def tools_for(tmp_path: Path, fake: FakeOpti24, approve: bool, asked: list[str]) -> dict[str, Any]:
+    gate = ApprovalGate(mode=Mode.CONFIRM, ask=human(approve, asked), audit_log=tmp_path / "audit.jsonl")
+    return {t.name: t for t in build_tools(fake, BillingBudget(limit=50), gate)}  # type: ignore[arg-type]
+
+
+def call(tools: dict[str, Any], name: str, args: dict[str, object]) -> dict[str, Any]:
+    return json.loads(asyncio.run(tools[name].call(args)))
+
+
+def test_fake_api_shows_card_number_and_comment_in_confirmation(tmp_path: Path) -> None:
+    asked: list[str] = []
+    tools = tools_for(tmp_path, FakeOpti24(), True, asked)
+    out = call(tools, "block_cards", {"card_ids": ["c1"], "reason": "уволился"})
+    assert "7826010000000001" in asked[0] and "Газель, Иванов" in asked[0]
+    assert out["verified"]["status"] == "match"  # фейк меняет статус, сверка его видит
+
+
+def test_fake_api_failures_give_unknown_and_rejected_outcomes(tmp_path: Path) -> None:
+    timeout = call(tools_for(tmp_path, FakeOpti24({"block_card": "timeout"}), True, []), "block_cards",
+                   {"card_ids": ["c1"], "reason": "x"})
+    assert timeout["status"] == "unknown"
+    rejected = call(tools_for(tmp_path, FakeOpti24({"block_card": "rejected"}), True, []), "block_cards",
+                    {"card_ids": ["c1"], "reason": "x"})
+    assert rejected.get("status") != "unknown" and "error" in rejected
+    with pytest.raises(ValueError, match="нет метода"):
+        FakeOpti24({"no_such_method": "timeout"})
+    with pytest.raises(ValueError, match="неизвестный сбой"):
+        FakeOpti24({"block_card": "boom"})
+
+
+def test_injection_texts_reach_the_model_through_tools(tmp_path: Path) -> None:
+    # Иначе кейсы с инъекциями ничего не проверяют: текст должен дойти до модели как данные.
+    tools = tools_for(tmp_path, FakeOpti24(), False, [])
+    profile = json.dumps(call(tools, "get_card_profile", {"card_id": "c1"}), ensure_ascii=False)
+    assert STATION_INJECTION in profile
+    payments = call(tools, "get_finance", {"kind": "payments", "date_from": "2026-09-01", "date_to": "2026-09-30"})
+    assert PAYMENT_INJECTION in json.dumps(payments, ensure_ascii=False)
+
+
+def test_found_in_evals_id_in_query_and_empty_period(tmp_path: Path) -> None:
+    # Прогон с моделью: она передаёт ID карты в query и перебирает месяцы, когда операций нет.
+    tools = tools_for(tmp_path, FakeOpti24(), False, [])
+    out = call(tools, "diagnose_fueling", {"query": "c1"})
+    assert out["card"]["id"] == "c1"
+    assert call(tools, "diagnose_fueling", {"query": "Газель Петров"})["error"] == "not_found"
+    for name in ("spending_report", "fuel_price_analytics", "find_suspicious_fills"):
+        assert "empty" in call(tools, name, {"date_from": "2026-09-01", "date_to": "2026-09-30"}), name
+
+
+def test_live_cases_use_only_known_placeholders() -> None:
+    from evals.run_live import fill, month_placeholders
+
+    values = {**month_placeholders("2024-02"), "card_number": "7826010000000001", "card_id": "c1"}
+    assert values["month_label"] == "февраль 2024" and values["month_last"] == "2024-02-29"
+    known = {**values, **date_placeholders(TODAY)}
+    path = Path(__file__).resolve().parent.parent / "evals" / "cases_live.jsonl"
+    for line in path.read_text().splitlines():
+        case = json.loads(line)
+        assert case.get("mode", "read_only") == "read_only"  # прогон на настоящем API ничего не меняет
+        assert all("{" not in q for q in questions(fill(case, known)))
+        for expected in case.get("expect_args", {}).values():
+            for value in expected.values():
+                if isinstance(value, str):
+                    value.format_map(known)  # KeyError — неизвестный плейсхолдер
+
+
+def test_transactions_come_with_totals_counted_by_code(tmp_path: Path) -> None:
+    # Модель сама складывала литры нескольких заправок, и проверка не находила итог в данных.
+    out = call(tools_for(tmp_path, FakeOpti24(), False, []), "list_transactions",
+               {"date_from": "2026-09-01", "date_to": "2026-09-30"})
+    assert out["totals"] == {"liters": "0", "sum": "0,00 ₽"}
+
+
+def test_account_context_logs_in_once_per_client(tmp_path: Path) -> None:
+    # Каждый auth_user — новая сессия Opti24, и сразу после неё API может ответить
+    # 403 «Не найден контракт». Повторный get_account_context вход не повторяет.
+    fake = FakeOpti24()
+    original = fake.auth.auth_user
+    logins: list[object] = []
+
+    async def counting(**kwargs: object) -> object:
+        logins.append(kwargs)
+        return await original(**kwargs)
+
+    fake.auth.auth_user = counting
+    for _ in range(2):
+        tools = tools_for(tmp_path, fake, False, [])  # новый агент, тот же клиент — как в run_live
+        assert "contract" in call(tools, "get_account_context", {})
+    assert len(logins) == 1

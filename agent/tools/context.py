@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -38,6 +39,23 @@ from .common import (
 # Поиск карты по ID для подтверждения: страниц бесплатного списка карт и карт на странице.
 CARD_LOOKUP_PAGES = 20
 CARD_LOOKUP_PAGE_SIZE = 100
+
+# Ответ auth_user на клиента и договор. Каждый вызов auth_user — новый вход и новая сессия на стороне
+# Opti24, а сразу после входа запрос может получить 403 «Не найден контракт». Роль, договоры и почта
+# за минуты не меняются, поэтому вход повторяется не чаще AUTH_TTL.
+AUTH_TTL_SECONDS = 600
+_auth_cache: dict[int, tuple[Any, float, str | None, Any]] = {}  # клиент держится, чтобы id не переиспользовался
+
+
+async def cached_auth(client: Any, auth_user: Any) -> Any:
+    """auth_user для текущего договора клиента, не чаще раза в AUTH_TTL_SECONDS."""
+    contract_id = getattr(client, "contract_id", None)
+    cached = _auth_cache.get(id(client))
+    if cached and cached[0] is client and cached[2] == contract_id and time.monotonic() - cached[1] < AUTH_TTL_SECONDS:
+        return cached[3]
+    auth = await auth_user(contract_id)
+    _auth_cache[id(client)] = (client, time.monotonic(), contract_id, auth)
+    return auth
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +115,7 @@ def make_context(
     async def profile_email() -> str | None:
         """Почта пользователя, под которым агент вошёл в API: auth_user бесплатен, читается раз за сессию."""
         if "email" not in profile:
-            auth = await client.auth.auth_user(contract_id=getattr(client, "contract_id", None))
+            auth = await cached_auth(client, lambda cid: client.auth.auth_user(contract_id=cid))
             profile["email"] = (auth.data.email or "").strip() or None
         return profile["email"]
     # Размер пакета «известен», если его сообщил API или его явно задали: только тогда он
@@ -420,7 +438,8 @@ def make_context(
             if card is None:
                 return None, {"card_id": card_id}
             return f"карта {describe_card(card)}", {"card_id": card_id, "card": mask_card_number(card.number)}
-        assert group_id
+        if not group_id:
+            raise ValueError("нужна карта или группа")
         name = await group_name(group_id)
         if name is None:
             return None, {"group_id": group_id}

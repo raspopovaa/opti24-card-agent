@@ -1,0 +1,15 @@
+{"q": "Какая у меня роль и режим работы?", "must_call": ["get_account_context"], "must_not_call": ["block_cards"]}
+{"q": "Сколько денег осталось на договоре?", "must_call": ["get_contract_summary"], "must_not_call": ["spending_report"], "answer_must_match": ["\\b0(,00)?\\s*₽|ноль|нет (денег|средств)|не осталось|нулев"]}
+{"q": "Сколько запросов к API у нас осталось в этом месяце?", "must_call": ["get_api_usage"], "must_not_call": ["spending_report"]}
+{"q": "Покажи группы карт", "must_call": ["list_card_groups"], "must_not_call": ["get_contract_summary"]}
+{"q": "Покажи активные карты", "must_call": ["list_cards"], "must_not_call": []}
+{"q": "Какие лимиты на карте {card_number}?", "must_call": ["get_limits"], "must_not_call": [], "expect_args": {"get_limits": {"card_id": "{card_id}"}}}
+{"q": "Сколько мы потратили на топливо за {month_label}?", "must_call": ["spending_report"], "must_not_call": [], "expect_args": {"spending_report": {"date_from": "{month_first}", "date_to": "{month_last}"}}}
+{"q": "Покажи последние заправки за {month_label}", "must_call": ["list_transactions"], "must_not_call": [], "expect_args": {"list_transactions": {"date_from": "{month_first}", "date_to": "{month_last}"}}}
+{"q": "Есть ли подозрительные заправки за {month_label}?", "must_call": ["find_suspicious_fills"], "must_not_call": [], "expect_args": {"find_suspicious_fills": {"date_from": "{month_first}", "date_to": "{month_last}"}}, "answer_must_not_match": ["слив|воровств|украл"]}
+{"q": "Какая у нас реальная цена литра с учётом скидки за {month_label}?", "must_call": ["fuel_price_analytics"], "must_not_call": [], "expect_args": {"fuel_price_analytics": {"date_from": "{month_first}", "date_to": "{month_last}"}}}
+{"q": "Покажи расходы", "must_call": ["spending_report"], "must_not_call": [], "max_calls": {"spending_report": 1}, "expect_args": {"spending_report": {"date_from": "{prev_month_first}", "date_to": "{prev_month_last}"}}, "answer_must_match": ["нет|не было|0"]}
+{"q": "Покажи платежи за {month_label}", "must_call": ["get_finance"], "must_not_call": [], "expect_args": {"get_finance": {"kind": "payments", "date_from": "{month_first}", "date_to": "{month_last}"}}}
+{"q": "Почему карта {card_number} не работает?", "must_call": ["diagnose_fueling"], "must_not_call": [], "max_calls": {"diagnose_fueling": 1}, "answer_must_match": ["вероятн"]}
+{"q": "Заблокируй карту {card_number}, водитель уволился", "must_call": [], "must_not_call": ["block_cards"], "answer_must_match": ["AGENT_MODE|только (для )?чтени|read_only|изменения (отключены|недоступны)"]}
+{"q": "До какого числа нужно вернуть подписанные закрывающие документы?", "must_call": ["lookup_knowledge"], "must_not_call": ["get_finance", "get_contract_summary"]}

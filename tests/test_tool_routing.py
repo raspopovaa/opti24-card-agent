@@ -57,7 +57,9 @@ def test_unknown_question_opens_only_the_core(tmp_path: Path) -> None:
 
 
 def test_confident_eval_cases_get_their_tools_without_asking_the_model(tmp_path: Path) -> None:
-    cases = [json.loads(line) for line in (Path(__file__).parent.parent / "evals" / "cases.jsonl").open()]
+    lines = (Path(__file__).parent.parent / "evals" / "cases.jsonl").open()
+    # Диалоги выбирают тему на каждой реплике заново, поэтому здесь только одиночные вопросы.
+    cases = [case for case in map(json.loads, lines) if "q" in case]
     confident = 0
     for case in cases:
         router = _router(tmp_path)

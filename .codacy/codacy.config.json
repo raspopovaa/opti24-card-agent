@@ -27,6 +27,18 @@
       "localConfigurationFile": "pyproject.toml",
       "useLocalConfigurationFile": true,
       "patterns": []
+    },
+    {
+      "toolId": "Bandit",
+      "localConfigurationFile": "bandit.yaml",
+      "useLocalConfigurationFile": true,
+      "patterns": []
+    },
+    {
+      "toolId": "Semgrep",
+      "localConfigurationFile": ".semgrep.yml",
+      "useLocalConfigurationFile": true,
+      "patterns": []
     }
   ],
   "exclude": []

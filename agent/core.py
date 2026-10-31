@@ -118,7 +118,7 @@ class FuelCardAgent:
         # устарела и сбивала следующие вопросы.
         found = classify(question)
         log_question(question, found)
-        note = hint(found)
+        note = hint(found, follow_up=bool(self.history))
         current = {**user_message, "content": f"{user_message['content']}\n{note}"} if note else user_message
         messages = [*self.history, current]
         self.evidence.add(user_message["content"])

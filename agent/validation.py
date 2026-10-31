@@ -37,6 +37,7 @@ _DATE_OR_TIME = re.compile(
     r"|\b\d{1,2}:\d{2}\b"
 )
 _MAX_SMALL_COUNT = 31  # «3 карты», «2 заправки», дни месяца: без единиц такие числа не проверяем
+_SPACED_CARD_NUMBER = re.compile(r"(?<!\d)\d{4}(?:" + _GROUP_SEP + r"\d{4}){3,4}(?!\d)")
 _MIN_IDENTIFIER_DIGITS = 6  # номера карт, договоров, ID — не величины
 
 
@@ -74,6 +75,7 @@ def _claims(answer: str) -> list[_Claim]:
     # Маскированные номера карт («****2323») — не величины; остальную разметку (**жирный**) убираем,
     # иначе знак перед числом мешает его распознать.
     text = re.sub(r"\*{3,}\d+", " ", answer)  # маска карты «****2323»; «**123» — жирный шрифт
+    text = _SPACED_CARD_NUMBER.sub(" ", text)  # номер карты группами «7005 8309 0359 9330»
     text = _DATE_OR_TIME.sub(" ", text.replace("*", " ").replace("`", " "))
     claims = []
     for match in _NUMBER.finditer(text):

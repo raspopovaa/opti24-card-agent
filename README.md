@@ -19,7 +19,7 @@
 python -m agent.dashboard    # только дашборд договора, без модели и без ключей ИИ
 python -m agent              # дашборд + диалог в терминале
 python scripts/smoke_test.py # проверка на настоящем API (DEMO), без модели
-pytest                       # 456 тестов без сети и без ключей
+pytest                       # 462 теста без сети и без ключей
 ruff check agent scripts evals tests && mypy agent  # проверки качества кода, их же запускает CI
 python scripts/estimate_cost.py
 python evals/run_retrieval.py   # качество поиска по базе знаний: hit@3 и «ответа нет», без модели
@@ -339,7 +339,7 @@ OPTI24_ENV_FILE=~/.opti24-production.env AGENT_CONTRACT_ID=<ID-договора>
 | `fuel_price_analytics` | операции за период + `get_azs_list_v1`, `get_dictionary` (регион АЗС) | тарифицируемый как `spending_report`, за тот же период бесплатно; регионы бесплатно | нет |
 | `get_finance` | `get_payments` / `get_invoices` / `get_documents` | платежи тарифицируемые, счета и документы бесплатные | нет |
 | `get_report_status` | `get_report_job_list_v1` | бесплатный | нет |
-| `download_fuel_report` | `download_report_file_v1_to` | тарифицируемый | нет, сохраняет файл в `reports/` |
+| `download_fuel_report` | `download_report_file_v1_to` | тарифицируемый | нет, сохраняет файл в `reports/`; по csv — сводка со сбором и наценками |
 | `lookup_knowledge` | без API: выжимки договора в `docs/knowledge/` | бесплатный | нет |
 | `lookup_dictionary` | `get_dictionary` (справочники: статусы, схемы скидки, условия оплаты, услуги АЗС, офисы) | бесплатный | нет |
 | `get_api_usage` | `get_info` | бесплатный | нет |

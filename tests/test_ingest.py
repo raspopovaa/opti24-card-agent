@@ -105,6 +105,15 @@ def test_broken_office_file_is_a_clear_error(tmp_path: Path) -> None:
         extract_text(tmp_path / "bad.docx")
 
 
+def test_xml_with_entities_is_rejected(tmp_path: Path) -> None:
+    # «Бомба» из вложенных сущностей XML не должна раздувать память при загрузке документа.
+    bomb = b'<?xml version="1.0"?><!DOCTYPE d [<!ENTITY a "aaaa">]><w:document>&a;</w:document>'
+    with zipfile.ZipFile(tmp_path / "bomb.docx", "w") as archive:
+        archive.writestr("word/document.xml", bomb)
+    with pytest.raises(IngestError, match="DOCTYPE"):
+        extract_text(tmp_path / "bomb.docx")
+
+
 def test_chunks_follow_headings_and_clauses() -> None:
     text = "## Срок претензии\nПретензию подают в течение суток.\n3.2. Штрафы\nНеустойка составляет 0,1 процента в день."
     headings = [h for h, _ in split_chunks(text, "Документ")]

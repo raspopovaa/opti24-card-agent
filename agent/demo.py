@@ -128,7 +128,8 @@ class SyntheticOpti24:
 
     def __init__(self, today: date | None = None, seed: int = 24, db_path: Path | None = None) -> None:
         self.today = today or date.today()
-        self._rng = random.Random(seed)
+        # Синтетические данные демо, не криптография.
+        self._rng = random.Random(seed)  # nosec B311
         self._next_id = 1
         self.cards_state: dict[str, dict[str, Any]] = {
             cid: {"number": number, "group": group, "comment": comment, "status": "Active", "driver": driver,

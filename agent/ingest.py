@@ -21,13 +21,13 @@ import json
 import os
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import zipfile
 from dataclasses import asdict, dataclass
 from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
-from xml.etree import ElementTree
+from xml.etree import ElementTree  # nosec B405
 
 DEFAULT_STORE = Path(__file__).resolve().parent.parent / "knowledge_store"
 KINDS = ("regulation", "tariff", "faq", "instruction", "norm", "other")
@@ -104,7 +104,14 @@ def _zip_xml(path: Path, names: list[str]) -> list[ElementTree.Element]:
     with zipfile.ZipFile(path) as archive:
         if sum(i.file_size for i in archive.infolist()) > MAX_UNPACKED_BYTES:
             raise IngestError("Файл слишком велик после распаковки.")
-        return [ElementTree.fromstring(archive.read(n)) for n in names if n in archive.namelist()]
+        return [_parse_xml(archive.read(n)) for n in names if n in archive.namelist()]
+
+
+def _parse_xml(data: bytes) -> ElementTree.Element:
+    # В частях OOXML не бывает DOCTYPE; без него нет сущностей, а значит, нет «бомбы» из вложенных сущностей.
+    if b"<!DOCTYPE" in data or b"<!ENTITY" in data:
+        raise IngestError("Файл содержит DOCTYPE или сущности XML и не принимается.")
+    return ElementTree.fromstring(data)  # nosec B314
 
 
 def _local(tag: str) -> str:
@@ -198,10 +205,12 @@ def _pptx(path: Path) -> str:
 
 
 def _pdf(path: Path) -> str:
-    if shutil.which("pdftotext") is None:
+    pdftotext = shutil.which("pdftotext")
+    if pdftotext is None:
         raise IngestError("Для PDF нужна утилита pdftotext (пакет poppler-utils).")
-    result = subprocess.run(  # noqa: S603
-        ["pdftotext", str(path), "-"], capture_output=True, text=True, timeout=120, check=False
+    # Список аргументов без shell: путь к файлу передаётся pdftotext как аргумент и не исполняется.
+    result = subprocess.run(  # noqa: S603  # nosec B603
+        [pdftotext, str(path), "-"], capture_output=True, text=True, timeout=120, check=False
     )
     if result.returncode != 0:
         raise IngestError("PDF не читается или защищён паролем.")
@@ -375,7 +384,7 @@ class Store:
         pieces = split_chunks(text, title)
         if not pieces:
             raise IngestError("В файле не нашлось текста для базы знаний.")
-        doc_id = hashlib.sha1(f"{title}|{kind}".encode()).hexdigest()[:10]
+        doc_id = hashlib.sha1(f"{title}|{kind}".encode(), usedforsecurity=False).hexdigest()[:10]
         previous = [d for d in documents if d.id == doc_id and d.status == "active"]
         if previous and previous[0].version == version and version:
             raise IngestError(f"Версия {version} документа «{title}» уже загружена.")

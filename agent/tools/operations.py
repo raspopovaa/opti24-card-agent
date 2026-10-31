@@ -29,7 +29,14 @@ def build(ctx: ToolContext) -> dict[str, Any]:
     client = ctx.client
     budget = ctx.budget
     transactions = ctx.transactions
-    source = ctx.transactions_source
+    transactions_source = ctx.transactions_source
+
+    def source(date_from: str, date_to: str, card_id: str | None, items: list[Any]) -> dict[str, Any]:
+        # Пустой период — тоже ответ: без явной пометки слабые модели перебирают соседние месяцы.
+        empty = {} if items else {
+            "empty": "За период операций нет. Так и скажи; другие периоды без просьбы пользователя не запрашивай."
+        }
+        return {**transactions_source(date_from, date_to, card_id), **empty}
     product_label = ctx.product_label
     regions_for = ctx.regions_for
     station_info = ctx.station_info
@@ -55,7 +62,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         except (APIError, BudgetExceededError, RequestValidationError, TransactionsUnavailableError) as exc:
             return _error(exc)
         return _json(
-            {"period": f"{date_from}…{date_to}", **summarize(items), **source(date_from, date_to, card_id)}
+            {"period": f"{date_from}…{date_to}", **summarize(items), **source(date_from, date_to, card_id, items)}
         )
 
     @beta_async_tool
@@ -121,7 +128,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             **price_analytics(items, region_of, service_fee_percent=fee),
             "service_fee_source": fee_source,
         }
-        result.update(source(date_from, date_to, card_id))
+        result.update(source(date_from, date_to, card_id, items))
         if defaults:
             result["defaults"] = defaults
         if fee is None:
@@ -167,9 +174,14 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         return _json(
             {
                 "period": f"{date_from}…{date_to}",
-                **source(date_from, date_to, card_id),
+                **source(date_from, date_to, card_id, items),
                 "total": total,
                 "shown": len(shown),
+                # Итог считает код, по всем операциям выборки (сторно уже с минусом): модель не складывает сама.
+                "totals": {
+                    "liters": str(sum((to_decimal(t.qty) for t in rows), Decimal(0))),
+                    "sum": rub(sum((to_decimal(t.sum) for t in rows), Decimal(0))),
+                },
                 **(
                     {"hint": "Показана часть операций: сузь период, карту или продукт."}
                     if total > len(shown)
@@ -263,7 +275,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             items = await transactions(date_from, date_to, card_id)
         except (APIError, BudgetExceededError, RequestValidationError, TransactionsUnavailableError) as exc:
             return _error(exc)
-        return _json({**find_anomalies(items, rules), **source(date_from, date_to, card_id)})
+        return _json({**find_anomalies(items, rules), **source(date_from, date_to, card_id, items)})
 
     @beta_async_tool
     async def diagnose_fueling(
@@ -294,9 +306,12 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             if query:
                 found = await client.cards.get_cards_v2(q=query, onpage=2)
                 cards = found.data.result or []
-                if not cards:
+                if not cards and " " not in query:
+                    # Модель часто передаёт в query ID карты («c1»): поиск API ищет только номер и комментарий.
+                    card_id = query
+                elif not cards:
                     return _json({"error": "not_found", "message": "Карта не найдена."})
-                if len(cards) > 1:
+                elif len(cards) > 1:
                     return _json(
                         {
                             "status": "ambiguous",
@@ -313,7 +328,8 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                             ],
                         }
                     )
-                card_id = cards[0].id
+                else:
+                    card_id = cards[0].id
 
             # 1. Статус карты.
             budget.spend()

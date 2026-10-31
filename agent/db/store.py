@@ -84,6 +84,7 @@ class OperationStore:
         if card_id:
             query += " AND card_id = ?"
             params.append(card_id)
+        # nosemgrep: sql-built-from-string — текст запроса из констант, значения идут параметрами
         rows = self._db.execute(query + " ORDER BY local_day, id", params).fetchall()
         return [json.loads(raw) for (raw,) in rows]
 
@@ -129,8 +130,9 @@ class OperationStore:
         # Подходит период, который накрывает запрошенный: по той же карте или по всем картам.
         cards = [_ALL_CARDS] if not card_id else [_ALL_CARDS, card_id]
         marks = ",".join("?" * len(cards))
+        # В тексте запроса только знаки «?», значения идут параметрами.
         row = self._db.execute(
-            f"SELECT MAX(loaded_at) FROM loaded_periods WHERE contract_key = ? "
+            f"SELECT MAX(loaded_at) FROM loaded_periods WHERE contract_key = ? "  # nosec B608
             f"AND date_from <= ? AND date_to >= ? AND card_id IN ({marks})",
             [self._key, date_from.isoformat(), date_to.isoformat(), *cards],
         ).fetchone()

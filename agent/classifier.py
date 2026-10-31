@@ -218,8 +218,12 @@ def classify(question: str, matrix: tuple[Topic, ...] | None = None) -> Classifi
     return Classification(chosen, missing, confident)
 
 
-def hint(found: Classification) -> str:
-    """Строка-подсказка для модели; пустая, если тема не определилась уверенно."""
+def hint(found: Classification, follow_up: bool = False) -> str:
+    """Строка-подсказка для модели; пустая, если тема не определилась уверенно.
+
+    follow_up — в разговоре уже были реплики: «за тот же период», «заблокируй её» опираются на них,
+    поэтому недостающий параметр сначала берётся из прошлых реплик, а не спрашивается заново.
+    """
     primary = found.primary
     if primary is None or not found.confident:
         return ""
@@ -232,7 +236,17 @@ def hint(found: Classification) -> str:
         parts.append(f"сначала инструменты: {', '.join(found.tools)}")
     for param in found.missing:
         title = PARAM_TITLES.get(param.kind, param.kind)
-        if param.default == "previous_month":
+        if follow_up and (param.default == "previous_month" or param.ask):
+            fallback = (
+                "возьми прошлый месяц из квадратных скобок и назови его в ответе"
+                if param.default == "previous_month"
+                else f"спроси: «{param.ask}»"
+            )
+            parts.append(
+                f"параметр «{title}» не назван в этом сообщении — возьми его из прошлых реплик разговора; "
+                f"если там его нет, {fallback}"
+            )
+        elif param.default == "previous_month":
             parts.append(f"{title} не указан — возьми прошлый месяц из квадратных скобок и назови его в ответе")
         elif param.ask:
             parts.append(f"не указан параметр «{title}» — сначала спроси: «{param.ask}», тарифицируемые инструменты до ответа не вызывай")

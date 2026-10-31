@@ -1,0 +1,61 @@
+# Opengrep/Semgrep rules for Codacy: risks that matter for an agent with access to client money and cards.
+# Keep this file ASCII-only: Opengrep reads it with the system locale and fails on Cyrillic under LANG=C.
+rules:
+  - id: subprocess-shell-true
+    languages: [python]
+    severity: ERROR
+    message: Command runs with shell=True, so data can inject a command. Pass a list of arguments.
+    pattern: subprocess.$FUNC(..., shell=True, ...)
+
+  - id: eval-or-exec
+    languages: [python]
+    severity: ERROR
+    message: eval/exec runs a string as code; text from the API or the model must never run this way.
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+
+  - id: tls-verification-disabled
+    languages: [python]
+    severity: ERROR
+    message: TLS verification is off, so the API key and client data can be intercepted.
+    pattern: $FUNC(..., verify=False, ...)
+
+  - id: sql-built-from-string
+    languages: [python]
+    severity: WARNING
+    message: SQL is built from a string; pass values as parameters (?) instead of formatting them into the text.
+    pattern-either:
+      - pattern: $DB.execute(f"...", ...)
+      - pattern: $DB.execute("..." % $X, ...)
+      - pattern: $DB.execute("...".format(...), ...)
+      - pattern: $DB.execute($A + $B, ...)
+
+  - id: secret-printed-or-logged
+    languages: [python]
+    severity: ERROR
+    message: A key or token from the environment goes to output or a log.
+    patterns:
+      - pattern-either:
+          - pattern: print(..., os.environ.get("$NAME", ...), ...)
+          - pattern: print(..., os.environ["$NAME"], ...)
+          - pattern: $LOG.$LEVEL(..., os.environ.get("$NAME", ...), ...)
+          - pattern: $LOG.$LEVEL(..., os.environ["$NAME"], ...)
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: (?i).*(KEY|TOKEN|SECRET|PASSWORD).*
+
+  - id: unsafe-deserialization
+    languages: [python]
+    severity: ERROR
+    message: pickle and yaml.load without SafeLoader run code from the file; use json or yaml.safe_load.
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+      - pattern: yaml.load($X)
+
+  - id: insecure-tempfile
+    languages: [python]
+    severity: WARNING
+    message: tempfile.mktemp is unsafe (race on the file name); use NamedTemporaryFile or mkstemp.
+    pattern: tempfile.mktemp(...)

@@ -238,7 +238,7 @@ def test_no_data_answers_are_not_held_to_content_requirements() -> None:
     assert not check_answer("Найдено 3 подозрительные заправки.", Evidence(), ["find_suspicious_fills"]).ok
 
 
-MAY_2024 = json.dumps(
+PRICE_SAMPLE = json.dumps(
     {
         "product_prices": [
             {
@@ -264,12 +264,12 @@ def test_numbers_derived_from_api_fields_are_accepted() -> None:
         "Май: 200,23 л, 46,71 ₽/л, АЗС 48,64 ₽/л, скидка 1,93 ₽/л (386,71 ₽ всего), "
         "со сбором 48,46 ₽/л, сбор 350,87 ₽, ставка 3,75 %."
     )
-    assert check_answer(answer, evidence(MAY_2024), ["fuel_price_analytics"]).ok
+    assert check_answer(answer, evidence(PRICE_SAMPLE), ["fuel_price_analytics"]).ok
 
 
 def test_arithmetic_does_not_accept_arbitrary_numbers() -> None:
     # Погрешность округления крупных величин большая: произвольная сумма не должна «совпасть».
-    data = evidence(MAY_2024)
+    data = evidence(PRICE_SAMPLE)
     for fabricated in ("5 000 ₽", "12 345 ₽", "999 999 ₽", "70 000 ₽"):
         assert check_answer(f"Итого {fabricated}.", data, []).unverified == (fabricated,), fabricated
 
@@ -367,3 +367,12 @@ def test_plan_does_not_invent_a_card(monkeypatch) -> None:  # type: ignore[no-un
     topic = classify("Почему карта не работает?").primary
     plan = plan_verification([], topic, date(2026, 10, 22), {"diagnose_fueling": Tool()})  # type: ignore[dict-item]
     assert plan.calls == [] and "card_id" in plan.skipped[0]
+
+
+def test_card_number_written_in_groups_is_not_a_quantity() -> None:
+    # Модель пишет номер карты группами по 4 цифры, а это не четыре величины.
+    evidence = Evidence()
+    evidence.add('{"cards": [{"number": "7826010000000001", "available": "0,00 ₽"}]}')
+    check = check_answer("Карта 7826 0100 0000 0001 активна, доступно 0,00 ₽.", evidence, ["list_cards"])
+    assert not check.unverified
+    assert check_answer("Карта 7826 0100 0000 0001, доступно 512 ₽.", evidence, ["list_cards"]).unverified

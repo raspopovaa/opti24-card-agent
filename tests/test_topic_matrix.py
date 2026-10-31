@@ -95,6 +95,13 @@ def test_hint_asks_for_missing_card_and_defaults_the_period() -> None:
     assert "возьми прошлый месяц" in spending and "сначала спроси" not in spending
 
 
+def test_follow_up_hint_takes_missing_card_and_period_from_the_dialog() -> None:
+    block = hint(classify("Заблокируй её, водитель уволился"), follow_up=True)
+    assert "из прошлых реплик" in block and "тарифицируемые инструменты до ответа не вызывай" not in block
+    same_period = hint(classify("А подозрительные заправки за тот же период были?"), follow_up=True)
+    assert "из прошлых реплик" in same_period
+
+
 def test_hint_for_unsupported_and_unknown_questions() -> None:
     assert "вне возможностей агента" in hint(classify("Переведи 5000 рублей на карту"))
     assert hint(classify("Расскажи анекдот")) == ""

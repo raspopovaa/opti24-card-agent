@@ -15,6 +15,7 @@ from agent import usage
 from agent.config import Settings
 from agent.core import FuelCardAgent
 from agent.core_types import Usage
+from agent.db.store import contract_key_for
 from tests.test_agent import FakeOpti24
 
 
@@ -34,7 +35,8 @@ def _agent(responses: list[NS]) -> FuelCardAgent:
     async def never(_: str) -> bool:
         return False
 
-    agent = FuelCardAgent(settings=Settings.from_env(), opti24=FakeOpti24([]), ask_human=never)  # type: ignore[arg-type]
+    fake: Any = FakeOpti24([])
+    agent = FuelCardAgent(settings=Settings.from_env(), opti24=fake, ask_human=never)
     agent.llm = NS(chat=NS(completions=NS(create=create)))
     return agent
 
@@ -46,7 +48,8 @@ def _rows(path: Path, sql: str) -> list[tuple[Any, ...]]:
 
 def test_question_writes_turn_model_steps_and_tool_calls(tmp_path: Path) -> None:
     summary = NS(id="t1", function=NS(name="get_contract_summary", arguments="{}"))
-    agent = _agent([_reply(None, [summary], 1000, 40, cached=200), _reply("Доступно 123 139,19 ₽.", None, 1500, 60)])
+    first = _reply(None, [summary], 1000, 40, cached=200)
+    agent = _agent([first, _reply("Доступно 123 139,19 ₽.", None, 1500, 60)])
     asyncio.run(agent.ask("Сколько денег осталось на договоре?"))
 
     path = tmp_path / "usage.db"  # AGENT_USAGE_DB из conftest
@@ -57,7 +60,10 @@ def test_question_writes_turn_model_steps_and_tool_calls(tmp_path: Path) -> None
     )
     assert turn == ("balance", 2, 1, 1, 2500, 100, 200, len("Сколько денег осталось на договоре?"), "answered", 0)
     calls = _rows(path, "SELECT step, purpose, provider, input_tokens, finish_reason, tools_visible FROM llm_calls")
-    assert [c[:5] for c in calls] == [(1, "answer", "cloudru", 1000, "tool_calls"), (2, "answer", "cloudru", 1500, "stop")]
+    assert [c[:5] for c in calls] == [
+        (1, "answer", "cloudru", 1000, "tool_calls"),
+        (2, "answer", "cloudru", 1500, "stop"),
+    ]
     assert all(c[5] and c[5] > 0 for c in calls)
     assert _rows(path, "SELECT tool, billable_calls, error_reason FROM tool_calls") == [
         ("get_contract_summary", 1, None)
@@ -67,8 +73,6 @@ def test_question_writes_turn_model_steps_and_tool_calls(tmp_path: Path) -> None
 
 
 def usage_contract_key() -> str:
-    from agent.db.store import contract_key_for
-
     return contract_key_for("c1")
 
 
@@ -106,7 +110,8 @@ def test_claude_input_is_normalized_to_include_cache(tmp_path: Path) -> None:
     ledger = usage.UsageLedger(tmp_path / "u.db", provider="claude", mode="read_only", interface="cli", prompt="p")
     sink = Usage(ledger=ledger)
     ledger.begin_turn(topic=None, section=None, confident=False, question="q")
-    sink.add_anthropic(NS(input_tokens=100, output_tokens=10, cache_read_input_tokens=900, cache_creation_input_tokens=0))
+    stats = NS(input_tokens=100, output_tokens=10, cache_read_input_tokens=900, cache_creation_input_tokens=0)
+    sink.add_anthropic(stats)
     ledger.end_turn(answer="a", outcome="answered")
     assert _rows(tmp_path / "u.db", "SELECT input_tokens, cache_read_tokens FROM llm_calls") == [(1000, 900)]
     assert sink.input_tokens == 100  # итог сессии в терминале остаётся как был
@@ -131,7 +136,7 @@ def test_report_groups_and_prices_added_later(tmp_path: Path, capsys: pytest.Cap
         ledger.begin_turn(topic=topic, section="money", confident=True, question="q")
         ledger.llm_call(model="m", input_tokens=1_000_000, output_tokens=100_000, cache_read_tokens=0)
         ledger.end_turn(answer="a", outcome="answered")
-    month = ledger._started_at[:7]
+    month = ledger.started_at[:7]
 
     assert usage.main(["--db", str(path), "report", "--month", month]) == 0
     assert "нет цены" in capsys.readouterr().out  # без цены рубли не выдумываются
@@ -149,7 +154,7 @@ def test_report_groups_and_prices_added_later(tmp_path: Path, capsys: pytest.Cap
 
 
 def test_call_cost_uses_cache_price() -> None:
-    call = usage._LlmCall(1, "answer", "m", 1_000_000, 0, 800_000, 0, 0, None, None, None)
+    call = usage.LlmCall(1, "answer", "m", 1_000_000, 0, 800_000, 0, 0, None, None, None)
     price = usage.Price(Decimal("10"), Decimal("40"), Decimal("1"))
     assert usage.call_cost(call, price) == Decimal("2.8000")  # 0,2 млн × 10 + 0,8 млн × 1
     assert usage.call_cost(call, None) is None

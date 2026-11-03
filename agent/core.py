@@ -143,7 +143,8 @@ class FuelCardAgent:
         )
         self.evidence = Evidence()
         self.evidence.add(SYSTEM_PROMPT)
-        self.tools = [_recording(tool, self.evidence, self) for tool in build_tools(self.opti24, self.budget, self.gate)]
+        built = build_tools(self.opti24, self.budget, self.gate)
+        self.tools = [_recording(tool, self.evidence, self) for tool in built]
         if self.settings.usage_db is not None:
             self.usage.ledger = UsageLedger(
                 self.settings.usage_db,

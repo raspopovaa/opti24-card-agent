@@ -120,6 +120,7 @@ def prompt_version(text: str) -> str:
 
 
 def usage_path_from_env() -> Path | None:
+    """Путь к базе из AGENT_USAGE_DB (по умолчанию data/usage.db); None — учёт выключен."""
     setting = os.environ.get("AGENT_USAGE_DB", str(DEFAULT_PATH)).strip()
     if setting.lower() in {"", "off", "0", "false"}:
         return None
@@ -127,6 +128,7 @@ def usage_path_from_env() -> Path | None:
 
 
 def connect(path: Path) -> sqlite3.Connection:
+    """Открывает базу и создаёт таблицы, если их нет."""
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path, timeout=5)
     db.execute("PRAGMA journal_mode=WAL")  # несколько агентов пишут в одну базу
@@ -138,7 +140,9 @@ def connect(path: Path) -> sqlite3.Connection:
 
 
 @dataclass(slots=True)
-class _LlmCall:
+class LlmCall:  # pylint: disable=too-many-instance-attributes
+    """Одно обращение к модели или к эмбеддингам."""
+
     step: int
     purpose: str
     model: str
@@ -153,7 +157,9 @@ class _LlmCall:
 
 
 @dataclass(slots=True)
-class _ToolCall:
+class ToolCall:
+    """Один вызов инструмента."""
+
     seq: int
     tool: str
     billable_calls: int
@@ -163,7 +169,9 @@ class _ToolCall:
 
 
 @dataclass(slots=True)
-class _Turn:
+class _Turn:  # pylint: disable=too-many-instance-attributes
+    """Вопрос, пока он не записан в базу."""
+
     turn_id: str
     started_at: str
     started: float
@@ -171,18 +179,20 @@ class _Turn:
     section: str | None
     confident: bool
     question_chars: int
-    llm: list[_LlmCall] = field(default_factory=list)
-    tools: list[_ToolCall] = field(default_factory=list)
+    llm: list[LlmCall] = field(default_factory=list)
+    tools: list[ToolCall] = field(default_factory=list)
 
 
 @dataclass(slots=True)
 class Price:
+    """Рубли за 1 млн токенов."""
+
     input: Decimal
     output: Decimal
     cache_read: Decimal | None
 
 
-def call_cost(call: _LlmCall, price: Price | None) -> Decimal | None:
+def call_cost(call: LlmCall, price: Price | None) -> Decimal | None:
     """Стоимость одного обращения в рублях; без цены — None, а не выдуманная сумма."""
     if price is None:
         return None
@@ -193,10 +203,10 @@ def call_cost(call: _LlmCall, price: Price | None) -> Decimal | None:
     return (total / Decimal(1_000_000)).quantize(Decimal("0.0001"))
 
 
-class UsageLedger:
+class UsageLedger:  # pylint: disable=too-many-instance-attributes
     """Собирает расход вопроса в памяти и пишет его в базу одной транзакцией в конце вопроса."""
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments
         self,
         path: Path | None,
         *,
@@ -218,7 +228,7 @@ class UsageLedger:
         self._prompt_version = prompt_version(prompt)
         self._interface = interface
         self._mode = mode
-        self._started_at = _now()
+        self.started_at = _now()
         self._session_saved = False
         self._turn: _Turn | None = None
         self._db: sqlite3.Connection | None = None
@@ -227,6 +237,7 @@ class UsageLedger:
     # --- запись событий вопроса ---
 
     def begin_turn(self, *, topic: str | None, section: str | None, confident: bool, question: str) -> None:
+        """Начинает вопрос: тема из классификатора и длина вопроса (сам текст не хранится)."""
         self._turn = _Turn(
             turn_id=uuid.uuid4().hex,
             started_at=_now(),
@@ -238,7 +249,7 @@ class UsageLedger:
         )
         _current.set(self)
 
-    def llm_call(
+    def llm_call(  # pylint: disable=too-many-arguments
         self,
         *,
         model: str,
@@ -252,30 +263,33 @@ class UsageLedger:
         finish_reason: str | None = None,
         purpose: str = "answer",
     ) -> None:
+        """Добавляет обращение к модели в текущий вопрос; вне вопроса ничего не делает."""
         turn = self._turn
         if turn is None:
             return
         step = sum(1 for c in turn.llm if c.purpose == purpose) + 1
         turn.llm.append(
-            _LlmCall(
+            LlmCall(
                 step, purpose, model, input_tokens, output_tokens, cache_read_tokens,
                 cache_write_tokens, reasoning_tokens, tools_visible, duration_ms, finish_reason,
             )
         )
 
-    def tool_call(
+    def tool_call(  # pylint: disable=too-many-arguments
         self, *, tool: str, billable_calls: int, result_chars: int, error_reason: str | None, duration_ms: int
     ) -> None:
+        """Добавляет вызов инструмента в текущий вопрос."""
         turn = self._turn
         if turn is None:
             return
-        turn.tools.append(_ToolCall(len(turn.tools) + 1, tool, billable_calls, result_chars, error_reason, duration_ms))
+        turn.tools.append(ToolCall(len(turn.tools) + 1, tool, billable_calls, result_chars, error_reason, duration_ms))
 
     def tool_ms(self) -> int:
         """Сколько миллисекунд вопроса ушло на инструменты (чтобы вычесть их из времени шага модели)."""
         return sum(t.duration_ms for t in self._turn.tools) if self._turn else 0
 
     def end_turn(self, *, answer: str, outcome: str, unverified_numbers: int = 0) -> None:
+        """Записывает вопрос одной транзакцией; ошибка записи не мешает ответу."""
         turn, self._turn = self._turn, None
         _current.set(None)
         if turn is None or self.path is None:
@@ -305,7 +319,7 @@ class UsageLedger:
                     "INSERT OR IGNORE INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         self.session_id, self.agent_id, self._agent_version, self._prompt_version, self._interface,
-                        self._mode, self.provider, self.contract_key, self.operator, self._started_at,
+                        self._mode, self.provider, self.contract_key, self.operator, self.started_at,
                     ),
                 )
                 self._session_saved = True
@@ -340,6 +354,7 @@ class UsageLedger:
             )
 
     def close(self) -> None:
+        """Закрывает соединение с базой."""
         if self._db is not None:
             self._db.close()
             self._db = None
@@ -376,61 +391,63 @@ GROUPS = {
 }
 
 
+def _empty(group: str) -> dict[str, Any]:
+    return {"group": group, "questions": 0, "steps": 0, "input_tokens": 0, "output_tokens": 0,
+            "cache_read_tokens": 0, "billable_calls": 0, "seconds": 0.0, "unverified": 0, "cost": Decimal(0)}
+
+
+def _add_cost(g: dict[str, Any], db: sqlite3.Connection, cache: dict[tuple[str, str, str], Price | None],
+              key: tuple[str, str, str], call: LlmCall) -> None:
+    if key not in cache:
+        cache[key] = _price(db, *key)
+    cost = call_cost(call, cache[key])
+    g["cost"] = None if cost is None or g["cost"] is None else g["cost"] + cost
+
+
+def _row(g: dict[str, Any]) -> dict[str, Any]:
+    n = g["questions"]
+    return {
+        "group": g["group"], "questions": n, "avg_steps": round(g["steps"] / n, 1),
+        "input_tokens": g["input_tokens"], "output_tokens": g["output_tokens"],
+        "cache_read_tokens": g["cache_read_tokens"], "billable_calls": g["billable_calls"],
+        "avg_seconds": round(g["seconds"] / n, 1), "unverified": g["unverified"],
+        "cost_rub": None if g["cost"] is None else str(g["cost"].quantize(Decimal("0.01"))),
+    }
+
+
 def report(db: sqlite3.Connection, month: str, by: str = "topic") -> list[dict[str, Any]]:
     """Сводка за месяц YYYY-MM по группе: вопросы, шаги, токены, вызовы API, время и рубли.
 
     Рубли считаются при чтении по таблице prices, действовавшей в день вопроса: цену можно
     внести и после замеров. Если хотя бы для одного обращения группы цены нет, сумма пустая.
     """
-    key = GROUPS[by]
     sql = (
-        f"SELECT {key}, t.turn_id, t.steps, t.billable_calls, t.duration_ms, t.unverified_numbers, "  # nosec B608
-        "substr(t.started_at, 1, 10), l.provider, l.model, l.input_tokens, l.output_tokens, "
-        "l.cache_read_tokens FROM turns t JOIN sessions s USING (session_id) "
+        f"SELECT {GROUPS[by]}, t.turn_id, t.steps, t.billable_calls, t.duration_ms, "  # nosec B608
+        "t.unverified_numbers, substr(t.started_at, 1, 10), l.provider, l.model, l.input_tokens, "
+        "l.output_tokens, l.cache_read_tokens FROM turns t JOIN sessions s USING (session_id) "
         "LEFT JOIN llm_calls l USING (turn_id) WHERE substr(t.started_at, 1, 7) = ?"
     )
     groups: dict[str, dict[str, Any]] = {}
     seen: set[tuple[str, str]] = set()
     prices: dict[tuple[str, str, str], Price | None] = {}
     for row in db.execute(sql, (month,)):
-        group, turn_id, steps, billable, duration, unverified, day, provider, model, tin, tout, tcache = row
-        g = groups.setdefault(
-            str(group),
-            {"group": str(group), "questions": 0, "steps": 0, "input_tokens": 0, "output_tokens": 0,
-             "cache_read_tokens": 0, "billable_calls": 0, "seconds": 0.0, "unverified": 0,
-             "cost_rub": Decimal(0)},
-        )
-        # При группировке не по модели строки вопроса повторяются по числу обращений к модели.
-        if (str(group), turn_id) not in seen:
-            seen.add((str(group), turn_id))
+        g = groups.setdefault(str(row[0]), _empty(str(row[0])))
+        # Строки вопроса повторяются по числу обращений к модели: вопрос считается один раз.
+        if (g["group"], row[1]) not in seen:
+            seen.add((g["group"], row[1]))
             g["questions"] += 1
-            g["steps"] += steps
-            g["billable_calls"] += billable
-            g["seconds"] += duration / 1000
-            g["unverified"] += int(unverified > 0)
-        if model is None:
+            g["steps"] += row[2]
+            g["billable_calls"] += row[3]
+            g["seconds"] += row[4] / 1000
+            g["unverified"] += int(row[5] > 0)
+        if row[8] is None:
             continue
-        g["input_tokens"] += tin
-        g["output_tokens"] += tout
-        g["cache_read_tokens"] += tcache
-        price_key = (provider, model, day)
-        if price_key not in prices:
-            prices[price_key] = _price(db, provider, model, day)
-        call = _LlmCall(0, "", model, tin, tout, tcache, 0, 0, None, None, None)
-        cost = call_cost(call, prices[price_key])
-        g["cost_rub"] = None if cost is None or g["cost_rub"] is None else g["cost_rub"] + cost
-    rows = []
-    for g in sorted(groups.values(), key=lambda v: v["input_tokens"], reverse=True):
-        n = g.pop("questions")
-        steps, seconds, cost = g.pop("steps"), g.pop("seconds"), g.pop("cost_rub")
-        rows.append(
-            {"group": g["group"], "questions": n, "avg_steps": round(steps / n, 1),
-             "input_tokens": g["input_tokens"], "output_tokens": g["output_tokens"],
-             "cache_read_tokens": g["cache_read_tokens"], "billable_calls": g["billable_calls"],
-             "avg_seconds": round(seconds / n, 1), "unverified": g["unverified"],
-             "cost_rub": None if cost is None else str(cost.quantize(Decimal("0.01")))}
-        )
-    return rows
+        g["input_tokens"] += row[9]
+        g["output_tokens"] += row[10]
+        g["cache_read_tokens"] += row[11]
+        call = LlmCall(0, "", row[8], row[9], row[10], row[11], 0, 0, None, None, None)
+        _add_cost(g, db, prices, (row[7], row[8], row[6]), call)
+    return [_row(g) for g in sorted(groups.values(), key=lambda v: v["input_tokens"], reverse=True)]
 
 
 def _print_report(rows: list[dict[str, Any]], month: str, by: str) -> None:
@@ -447,6 +464,7 @@ def _print_report(rows: list[dict[str, Any]], month: str, by: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Командная строка: отчёт за месяц или цена модели."""
     parser = argparse.ArgumentParser(prog="python -m agent.usage", description="Расход токенов и запросов агентов")
     parser.add_argument("--db", type=Path, help="база учёта (по умолчанию AGENT_USAGE_DB или data/usage.db)")
     sub = parser.add_subparsers(dest="command")

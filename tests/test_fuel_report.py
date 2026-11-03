@@ -47,7 +47,9 @@ def test_fee_and_price_with_fee_come_from_report() -> None:
     assert total["service_fee"] == "481,10 ₽"  # 59 + 427 − 5,9 + 1
     assert total["paid_with_fee"] == "48 591,10 ₽"
     assert total["service_fee_percent"] == "1.00"
-    assert total["price_with_fee_per_liter"] == "61,51 ₽"  # 48 591,10 / 790
+    # Цена литра только по топливу: (48 010 + 480,10) / 790, салфетки за 100 ₽ и их сбор не входят.
+    assert total["price_with_fee_per_liter"] == "61,38 ₽"
+    assert total["price_per_liter"] == "60,77 ₽"  # 48 010 / 790
     assert out["period"] == "2026-09-01…2026-09-03"
 
 

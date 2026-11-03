@@ -282,6 +282,19 @@ def test_instruction_forbids_invented_numbers_and_requires_the_formula() -> None
     assert "Сырой JSON ответа инструмента в чат не выводи" in SYSTEM_PROMPT
 
 
+def test_instruction_requires_a_full_change_plan_and_chat_consent_before_any_change() -> None:
+    from agent.prompt import SYSTEM_PROMPT
+
+    assert "клиенту план изменения и попроси подтвердить его в чате" in SYSTEM_PROMPT
+    assert "вызывай только после явного согласия клиента на этот план" in SYSTEM_PROMPT
+    assert "без «и ещё N» и без top-N" in SYSTEM_PROMPT
+    assert "все текущие лимиты цели" in SYSTEM_PROMPT
+    assert "все текущие правила цели и новое правило" in SYSTEM_PROMPT
+    assert "Не преуменьшай объём и последствия изменения" in SYSTEM_PROMPT
+    # Прежнее правило «вызывай инструмент сразу, без вопроса в чате» противоречит плану с согласием.
+    assert "вызывай инструмент сразу" not in SYSTEM_PROMPT
+
+
 def _agent_with(monkeypatch, tmp_path, verify: str, replies):  # type: ignore[no-untyped-def]
     from agent.config import Settings
     from agent.core import FuelCardAgent

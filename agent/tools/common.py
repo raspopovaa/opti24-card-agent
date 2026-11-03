@@ -30,9 +30,38 @@ class TransactionsUnavailableError(Exception):
     """Стенд не отдаёт операции (на DEMO get_transactions_v2 отвечает HTTP 405)."""
 
 
+# Что делать модели с распознанным ответом API (ErrorContext.reason из apisdkopti24 0.0.7).
+REASON_ADVICE = {
+    "object_not_accessible": "Карта, группа или договор не найдены или чужие: API не различает эти случаи. "
+    "Сверь ID через list_cards или list_card_groups и номер договора; другие ID не перебирай.",
+    "plan_not_paid": "Метод закрыт тарифом API: скажи, что пакет нужно оплатить в личном кабинете.",
+    "processing_refused": "Процессинг отказал в операции по карте: назови код отказа (processing_code).",
+    "report_failed": "Отчёт не будет сформирован: предложи заказать его заново, сам не заказывай.",
+    "waf_blocked": "Запрос остановила защита оператора (WAF), а не API: не повторяй, предложи подождать "
+    "несколько минут или написать администратору.",
+    "outcome_unknown": "Шлюз не дождался ответа сервера: изменение могло выполниться. Не повторяй, "
+    "предложи проверить текущее состояние чтением.",
+    "region_limit_point_id": "Региональный лимит не создан: нужен числовой ID АЗС из справочника АЗС.",
+}
+
+
 def _error(exc: Exception) -> str:
+    """Ошибка для модели: класс, текст и, если SDK распознал ответ, причина и можно ли повторять."""
     # Текст исключений SDK очищен от секретов, но всё равно ограничиваем длину.
-    return _json({"error": type(exc).__name__, "message": str(exc)[:300]})
+    payload: dict[str, object] = {"error": type(exc).__name__, "message": str(exc)[:300]}
+    context = getattr(exc, "context", None)
+    if isinstance(exc, APIError) and context is not None:
+        if context.reason:
+            payload["reason"] = context.reason
+            if advice := REASON_ADVICE.get(context.reason):
+                payload["advice"] = advice
+        if context.hint:
+            payload["hint"] = context.hint[:300]
+        if not context.retryable:
+            payload["retry"] = "Повтор того же запроса не поможет: не вызывай инструмент снова с теми же данными."
+    if (code := getattr(exc, "processing_code", None)) is not None:
+        payload["processing_code"] = code
+    return _json(payload)
 
 
 def _rub_optional(value: float | int | str | None) -> str | None:

@@ -303,3 +303,10 @@ def test_session_is_written_again_after_rolled_back_turn(tmp_path: Path) -> None
     ledger.begin_turn(topic=None, section=None, confident=False, question="q")
     ledger.end_turn(answer="a", outcome="answered")
     assert _rows(path, "SELECT COUNT(*) FROM sessions") == [(1,)]
+
+
+def test_tiny_costs_are_not_rounded_away_before_sum() -> None:
+    call = usage.LlmCall(1, "embedding", "m", 3, 0, 0, 0, 0, None, None, None)
+    cost = usage.call_cost(call, usage.Price(Decimal("10"), Decimal("0"), None))
+    assert cost == Decimal("0.00003")  # 3 токена × 10 ₽ / 1 млн
+    assert sum([cost] * 1000, Decimal(0)) == Decimal("0.03")

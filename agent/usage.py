@@ -207,7 +207,7 @@ def call_cost(call: LlmCall, price: Price | None) -> Decimal | None:
     write_price = price.cache_write if price.cache_write is not None else price.input
     fresh = max(call.input_tokens - read - write, 0)
     total = fresh * price.input + read * read_price + write * write_price + call.output_tokens * price.output
-    return (total / Decimal(1_000_000)).quantize(Decimal("0.0001"))
+    return total / Decimal(1_000_000)  # без округления: округляется только итог группы
 
 
 class UsageLedger:  # pylint: disable=too-many-instance-attributes

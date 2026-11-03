@@ -270,3 +270,16 @@ def test_model_call_without_usage_is_still_a_step(tmp_path: Path) -> None:
     reply.usage = None
     asyncio.run(_agent([reply]).ask("Сколько запросов осталось в пакете?"))
     assert _rows(tmp_path / "usage.db", "SELECT steps, input_tokens FROM turns") == [(1, 0)]
+
+
+def test_model_report_keeps_turn_metrics_on_answer_model(tmp_path: Path) -> None:
+    path = tmp_path / "u.db"
+    ledger = usage.UsageLedger(path, provider="cloudru", mode="read_only", interface="cli", prompt="p")
+    ledger.begin_turn(topic="contract_terms", section="reference", confident=True, question="q")
+    usage.record_embedding("bge-m3", 12, 5)
+    ledger.llm_call(model="chat", input_tokens=100, output_tokens=10)
+    ledger.end_turn(answer="a", outcome="answered")
+    with sqlite3.connect(path) as db:
+        rows = {r["group"]: r for r in usage.report(db, ledger.started_at[:7], by="model")}
+    assert (rows["chat"]["questions"], rows["chat"]["avg_steps"]) == (1, 1.0)
+    assert (rows["bge-m3"]["questions"], rows["bge-m3"]["avg_steps"], rows["bge-m3"]["input_tokens"]) == (0, None, 12)

@@ -423,10 +423,10 @@ def _add_cost(g: dict[str, Any], db: sqlite3.Connection, cache: dict[tuple[str, 
 def _row(g: dict[str, Any]) -> dict[str, Any]:
     n = g["questions"]
     return {
-        "group": g["group"], "questions": n, "avg_steps": round(g["steps"] / n, 1),
+        "group": g["group"], "questions": n, "avg_steps": round(g["steps"] / n, 1) if n else None,
         "input_tokens": g["input_tokens"], "output_tokens": g["output_tokens"],
         "cache_read_tokens": g["cache_read_tokens"], "billable_calls": g["billable_calls"],
-        "avg_seconds": round(g["seconds"] / n, 1), "unverified": g["unverified"],
+        "avg_seconds": round(g["seconds"] / n, 1) if n else None, "unverified": g["unverified"],
         "cost_rub": None if g["cost"] is None else str(g["cost"].quantize(Decimal("0.01"))),
     }
 
@@ -440,7 +440,7 @@ def report(db: sqlite3.Connection, month: str, by: str = "topic") -> list[dict[s
     sql = (
         f"SELECT {GROUPS[by]}, t.turn_id, t.steps, t.billable_calls, t.duration_ms, "  # nosec B608
         "t.unverified_numbers, substr(t.started_at, 1, 10), l.provider, l.model, l.input_tokens, "
-        "l.output_tokens, l.cache_read_tokens, l.cache_write_tokens FROM turns t JOIN sessions s USING (session_id) "
+        "l.output_tokens, l.cache_read_tokens, l.cache_write_tokens, l.purpose FROM turns t JOIN sessions s USING (session_id) "
         "LEFT JOIN llm_calls l USING (turn_id) WHERE substr(t.started_at, 1, 7) = ?"
     )
     groups: dict[str, dict[str, Any]] = {}
@@ -449,7 +449,9 @@ def report(db: sqlite3.Connection, month: str, by: str = "topic") -> list[dict[s
     for row in db.execute(sql, (month,)):
         g = groups.setdefault(str(row[0]), _empty(str(row[0])))
         # Строки вопроса повторяются по числу обращений к модели: вопрос считается один раз.
-        if (g["group"], row[1]) not in seen:
+        # В разрезе по модели эмбеддинги дают только токены и рубли: шаги и вызовы API — у модели ответа.
+        turn_level = not (by == "model" and row[13] == "embedding")
+        if turn_level and (g["group"], row[1]) not in seen:
             seen.add((g["group"], row[1]))
             g["questions"] += 1
             g["steps"] += row[2]

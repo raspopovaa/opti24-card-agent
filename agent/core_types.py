@@ -10,7 +10,7 @@ STEP_LIMIT_TEXT = "Достигнут предел шагов агента"
 
 
 class UsageSink(Protocol):
-    def add_tokens(
+    def add_tokens(  # pylint: disable=too-many-arguments
         self,
         *,
         input_tokens: int = 0,
@@ -37,7 +37,7 @@ class Usage:
     # Учёт по вопросам в базе (agent.usage.UsageLedger); без него — только итог сессии.
     ledger: Any = None
 
-    def add_tokens(
+    def add_tokens(  # pylint: disable=too-many-arguments
         self,
         *,
         input_tokens: int = 0,
@@ -71,7 +71,7 @@ class Usage:
                 finish_reason=finish_reason,
             )
 
-    def add_anthropic(
+    def add_anthropic(  # pylint: disable=too-many-arguments
         self, usage: Any, *, model: str = "", tools_visible: int | None = None, duration_ms: int | None = None,
         finish_reason: str | None = None,
     ) -> None:

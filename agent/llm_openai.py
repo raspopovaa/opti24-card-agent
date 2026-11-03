@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from .core_types import UsageSink
+from .core_types import STEP_LIMIT_TEXT, UsageSink
 
 MAX_TOOL_OUTPUT = 6000  # символов: слишком длинный ответ инструмента сокращаем
 _PARTIAL_HINT = "Ответ сокращён: показана часть. Скажи об этом и предложи сузить период или фильтр."
@@ -167,17 +168,26 @@ async def run_openai_loop(
         current = tools() if callable(tools) else tools
         by_name = {t.name: t for t in current}
         schemas = to_openai_tools(current)
+        started = time.monotonic()
         response = await client.chat.completions.create(
             model=model, messages=conversation, tools=schemas, max_tokens=4096
         )
+        # Обращение пишется и без usage в ответе: шаг был, токены неизвестны (нули).
         u = response.usage
-        if u is not None:
-            usage.add_tokens(
-                input_tokens=u.prompt_tokens or 0,
-                output_tokens=u.completion_tokens or 0,
-                # DeepSeek отдаёт попадания в кеш отдельным полем
-                cache_read_tokens=getattr(u, "prompt_cache_hit_tokens", 0) or 0,
-            )
+        details = getattr(u, "completion_tokens_details", None)
+        prompt_details = getattr(u, "prompt_tokens_details", None)
+        usage.add_tokens(
+            input_tokens=getattr(u, "prompt_tokens", 0) or 0,
+            output_tokens=getattr(u, "completion_tokens", 0) or 0,
+            # DeepSeek отдаёт попадания в кеш полем верхнего уровня, OpenAI — в prompt_tokens_details
+            cache_read_tokens=getattr(u, "prompt_cache_hit_tokens", 0) or getattr(prompt_details, "cached_tokens", 0) or 0,
+            cache_write_tokens=getattr(prompt_details, "cache_write_tokens", 0) or 0,
+            model=model,
+            reasoning_tokens=getattr(details, "reasoning_tokens", 0) or 0,
+            tools_visible=len(schemas),
+            duration_ms=int((time.monotonic() - started) * 1000),
+            finish_reason=getattr(response.choices[0], "finish_reason", None),
+        )
         message = response.choices[0].message
         text = message.content or text
         calls = message.tool_calls or []
@@ -193,4 +203,8 @@ async def run_openai_loop(
         for call, output in zip(calls, results, strict=True):
             conversation.append({"role": "tool", "tool_call_id": call.id, "content": output})
 
-    return text or "Достигнут предел шагов агента: уточните вопрос.", called
+    # Шаги кончились, а модель всё ещё вызывала инструменты: текст последнего шага не итоговый
+    # ответ, поэтому человек и учёт расхода видят, что ответ упёрся в предел.
+    if text:
+        return f"{text}\n\n{STEP_LIMIT_TEXT}: ответ может быть неполным, уточните вопрос.", called
+    return f"{STEP_LIMIT_TEXT}: уточните вопрос.", called

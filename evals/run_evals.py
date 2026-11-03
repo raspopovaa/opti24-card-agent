@@ -486,6 +486,7 @@ async def run_case(settings: Settings, case: dict[str, Any], runs: int, pause: f
                 settings=case_settings,
                 opti24=FakeOpti24(case.get("fail")),  # type: ignore[arg-type]
                 ask_human=human(bool(case.get("approve", False)), asked),
+                interface="eval",
             )
             try:
                 for question in questions(case):

@@ -14,6 +14,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from .providers import DEFAULT_PROVIDER, get_provider
+from .usage import usage_path_from_env
 
 
 def _int_env(name: str, default: int) -> int:
@@ -60,6 +61,7 @@ class Settings:
     project: str = ""  # ID каталога Yandex Cloud; для остальных провайдеров пусто
     tool_routing: str = "auto"  # двухуровневый выбор инструментов у OpenAI-совместимых провайдеров: auto/on включают, off отключает
     verify_answer: bool = False  # повторная сверка чисел инструментом тратит пакет API; AGENT_VERIFY_ANSWER=on включает
+    usage_db: Path | None = None  # учёт токенов по вопросам (agent/usage.py); None — не писать
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -92,4 +94,5 @@ class Settings:
             project=project,
             tool_routing=_choice_env("AGENT_TOOL_ROUTING", "auto", {"auto", "on", "off"}),
             verify_answer=_choice_env("AGENT_VERIFY_ANSWER", "off", {"on", "off"}) == "on",
+            usage_db=usage_path_from_env(),
         )

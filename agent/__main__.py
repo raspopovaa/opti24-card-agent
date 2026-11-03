@@ -69,7 +69,9 @@ async def main() -> None:
             production=False if args.demo else is_production(conn),
             choose=choose_in_terminal,
         )
-        agent = FuelCardAgent(settings=settings, opti24=opti24, ask_human=_confirm)
+        agent = FuelCardAgent(
+            settings=settings, opti24=opti24, ask_human=_confirm, interface="demo" if args.demo else "cli"
+        )
         if not args.no_dashboard:
             render(await collect(opti24, agent.budget, date.today()))
         print(
@@ -85,6 +87,9 @@ async def main() -> None:
                 f"\nТокены: вход {u.input_tokens}, из кеша {u.cache_read_tokens}, "
                 f"выход {u.output_tokens}; тарифицируемых вызовов API: {agent.budget.spent}"
             )
+            if u.ledger is not None:
+                u.ledger.close()
+                print(f"Расход по вопросам записан в {settings.usage_db}: python -m agent.usage")
             await opti24.auth.logoff()
 
 

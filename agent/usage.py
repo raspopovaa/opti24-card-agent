@@ -400,7 +400,7 @@ def _price(db: sqlite3.Connection, provider: str, model: str, day: str) -> Price
 
 GROUPS = {
     "topic": "COALESCE(t.topic, '(без темы)')",
-    "model": "l.model",
+    "model": "l.provider || '/' || l.model",  # одна модель у разных провайдеров — разные цены
     "agent": "t.agent_id",
     "interface": "s.interface",
     "prompt": "s.prompt_version",

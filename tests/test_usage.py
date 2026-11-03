@@ -281,5 +281,5 @@ def test_model_report_keeps_turn_metrics_on_answer_model(tmp_path: Path) -> None
     ledger.end_turn(answer="a", outcome="answered")
     with sqlite3.connect(path) as db:
         rows = {r["group"]: r for r in usage.report(db, ledger.started_at[:7], by="model")}
-    assert (rows["chat"]["questions"], rows["chat"]["avg_steps"]) == (1, 1.0)
-    assert (rows["bge-m3"]["questions"], rows["bge-m3"]["avg_steps"], rows["bge-m3"]["input_tokens"]) == (0, None, 12)
+    assert (rows["cloudru/chat"]["questions"], rows["cloudru/chat"]["avg_steps"]) == (1, 1.0)
+    assert (rows["cloudru/bge-m3"]["questions"], rows["cloudru/bge-m3"]["avg_steps"], rows["cloudru/bge-m3"]["input_tokens"]) == (0, None, 12)

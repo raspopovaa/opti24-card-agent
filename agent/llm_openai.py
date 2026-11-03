@@ -201,4 +201,8 @@ async def run_openai_loop(
         for call, output in zip(calls, results, strict=True):
             conversation.append({"role": "tool", "tool_call_id": call.id, "content": output})
 
-    return text or f"{STEP_LIMIT_TEXT}: уточните вопрос.", called
+    # Шаги кончились, а модель всё ещё вызывала инструменты: текст последнего шага не итоговый
+    # ответ, поэтому человек и учёт расхода видят, что ответ упёрся в предел.
+    if text:
+        return f"{text}\n\n{STEP_LIMIT_TEXT}: ответ может быть неполным, уточните вопрос.", called
+    return f"{STEP_LIMIT_TEXT}: уточните вопрос.", called

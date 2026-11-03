@@ -165,6 +165,7 @@ class FuelCardAgent:
         if self.llm is None:
             self.llm = make_llm(self.settings)
         found = classify(question)
+        self.last_check = AnswerCheck()  # проверка прошлого вопроса не относится к этому
         ledger: UsageLedger | None = self.usage.ledger
         if ledger is not None:
             ledger.contract_key = _contract_key(self.opti24)
@@ -217,7 +218,7 @@ class FuelCardAgent:
             self.tool_calls += [name for name, _ in called]
             self.tool_inputs += called
         outcome = "answered" if final_text else "empty"
-        if final_text.startswith(STEP_LIMIT_TEXT):
+        if STEP_LIMIT_TEXT in final_text:
             outcome = "limit"
 
         # Ответ сверяется с данными до того, как его увидит человек: найденное дописывается к ответу.

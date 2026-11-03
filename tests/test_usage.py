@@ -211,3 +211,25 @@ def test_old_database_gets_cache_write_price_column(tmp_path: Path) -> None:
     assert usage.main(["--db", str(path), "price", "--provider", "p", "--model", "m", "--input", "1",
                        "--output", "2", "--cache-write", "1.25"]) == 0
     assert _rows(path, "SELECT rub_per_1m_cache_write FROM prices") == [("1.25",)]
+
+
+def test_limit_with_text_on_every_step_is_recorded_as_limit(tmp_path: Path) -> None:
+    call = NS(id="t", function=NS(name="get_api_usage", arguments="{}"))
+    replies = []
+    for _ in range(8):
+        reply = _reply("Сейчас проверю.", [call], 10, 5)
+        reply.choices[0].finish_reason = "tool_calls"
+        replies.append(reply)
+    answer = asyncio.run(_agent(replies).ask("Сколько запросов осталось в пакете?"))
+    assert answer.startswith("Сейчас проверю.") and "Достигнут предел шагов" in answer
+    assert _rows(tmp_path / "usage.db", "SELECT outcome FROM turns") == [("limit",)]
+
+
+def test_failed_turn_does_not_inherit_previous_unverified_numbers(tmp_path: Path) -> None:
+    agent = _agent([_reply("Доступно 999 999,99 ₽.", None, 10, 5)])  # число не из инструментов
+    asyncio.run(agent.ask("Сколько денег?"))
+    with pytest.raises(RuntimeError):  # у фейковой модели кончились ответы: вопрос падает
+        asyncio.run(agent.ask("А ещё?"))
+    rows = _rows(tmp_path / "usage.db", "SELECT outcome, unverified_numbers FROM turns ORDER BY rowid")
+    assert rows[0][1] > 0
+    assert rows[1] == ("error", 0)

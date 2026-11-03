@@ -440,7 +440,8 @@ def report(db: sqlite3.Connection, month: str, by: str = "topic") -> list[dict[s
     sql = (
         f"SELECT {GROUPS[by]}, t.turn_id, t.steps, t.billable_calls, t.duration_ms, "  # nosec B608
         "t.unverified_numbers, substr(t.started_at, 1, 10), l.provider, l.model, l.input_tokens, "
-        "l.output_tokens, l.cache_read_tokens, l.cache_write_tokens, l.purpose FROM turns t JOIN sessions s USING (session_id) "
+        "l.output_tokens, l.cache_read_tokens, l.cache_write_tokens, l.purpose "
+        "FROM turns t JOIN sessions s USING (session_id) "
         "LEFT JOIN llm_calls l USING (turn_id) WHERE substr(t.started_at, 1, 7) = ?"
     )
     groups: dict[str, dict[str, Any]] = {}

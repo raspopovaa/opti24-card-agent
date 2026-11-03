@@ -16,7 +16,9 @@ import hashlib
 import json
 import os
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,6 +30,22 @@ AskHuman = Callable[[str], Awaitable[bool]]
 
 class BudgetExceededError(RuntimeError):
     pass
+
+
+# Счётчик тарифицируемых вызовов текущего инструмента. Инструменты одного шага идут через
+# asyncio.gather, у каждой задачи свой контекст, поэтому вызовы не смешиваются.
+_tool_spend: ContextVar[list[int] | None] = ContextVar("tool_spend", default=None)
+
+
+@contextmanager
+def count_tool_spend() -> Iterator[list[int]]:
+    """Считает тарифицируемые вызовы одного инструмента в текущей задаче: counter[0]."""
+    counter = [0]
+    token = _tool_spend.set(counter)
+    try:
+        yield counter
+    finally:
+        _tool_spend.reset(token)
 
 
 @dataclass(slots=True)
@@ -49,6 +67,9 @@ class BillingBudget:
                 "Сообщи пользователю и предложи продолжить в новой сессии."
             )
         self.spent += calls
+        counter = _tool_spend.get()
+        if counter is not None:
+            counter[0] += calls
 
 
 def mask_card_number(number: object) -> str | None:

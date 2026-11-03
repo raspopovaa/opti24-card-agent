@@ -19,7 +19,7 @@
 python -m agent.dashboard    # только дашборд договора, без модели и без ключей ИИ
 python -m agent              # дашборд + диалог в терминале
 python scripts/smoke_test.py # проверка на настоящем API (DEMO), без модели
-pytest                       # 475 тестов без сети и без ключей
+pytest                       # 479 тестов без сети и без ключей
 ruff check agent scripts evals tests && mypy agent  # проверки качества кода, их же запускает CI
 python scripts/estimate_cost.py
 python evals/run_retrieval.py   # качество поиска по базе знаний: hit@3 и «ответа нет», без модели
@@ -502,7 +502,7 @@ python -m agent.usage report --by prompt
 python -m agent.usage price --provider cloudru --model deepseek-ai/DeepSeek-V4-Flash --from 2026-11-01 --input ВХОД --output ВЫХОД --source ССЫЛКА
 ```
 
-Вместо ВХОД и ВЫХОД подставьте рубли за 1 млн токенов из прайса провайдера.
+Вместо ВХОД и ВЫХОД подставьте рубли за 1 млн токенов из прайса провайдера. Если у провайдера отдельная цена чтения и записи кеша (у Claude запись дороже обычного входа), добавьте `--cache-read` и `--cache-write`; без них кеш считается по цене входа. Эмбеддинги записываются с провайдером из `AGENT_EMBEDDING_BASE_URL`, поэтому их цену задают для этого провайдера.
 
 `--by` принимает topic, model, agent, interface или prompt. Рубли отчёт считает по ценам из
 `prices` на день вопроса, поэтому цену можно внести и после замеров; без цены сумма пустая.

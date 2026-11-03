@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_PATH = Path("data/usage.db")
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 AGENT_ID = "opti24-card-agent"
 
 _SCHEMA = """
@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS prices (
     rub_per_1m_output TEXT NOT NULL,
     rub_per_1m_cache_read TEXT,
     source TEXT,
+    rub_per_1m_cache_write TEXT,
     PRIMARY KEY (provider, model, valid_from)
 );
 """
@@ -133,6 +134,9 @@ def connect(path: Path) -> sqlite3.Connection:
     db = sqlite3.connect(path, timeout=5)
     db.execute("PRAGMA journal_mode=WAL")  # несколько агентов пишут в одну базу
     db.executescript(_SCHEMA)
+    columns = {row[1] for row in db.execute("PRAGMA table_info(prices)")}
+    if "rub_per_1m_cache_write" not in columns:  # база версии 1
+        db.execute("ALTER TABLE prices ADD COLUMN rub_per_1m_cache_write TEXT")
     if db.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0] == 0:
         db.execute("INSERT INTO schema_version VALUES (?, ?)", (SCHEMA_VERSION, _now()))
     db.commit()
@@ -154,6 +158,7 @@ class LlmCall:  # pylint: disable=too-many-instance-attributes
     tools_visible: int | None
     duration_ms: int | None
     finish_reason: str | None
+    provider: str | None = None  # None — провайдер сессии
 
 
 @dataclass(slots=True)
@@ -190,16 +195,18 @@ class Price:
     input: Decimal
     output: Decimal
     cache_read: Decimal | None
+    cache_write: Decimal | None = None
 
 
 def call_cost(call: LlmCall, price: Price | None) -> Decimal | None:
     """Стоимость одного обращения в рублях; без цены — None, а не выдуманная сумма."""
     if price is None:
         return None
-    cached = call.cache_read_tokens
-    cache_price = price.cache_read if price.cache_read is not None else price.input
-    fresh = max(call.input_tokens - cached, 0)
-    total = fresh * price.input + cached * cache_price + call.output_tokens * price.output
+    read, write = call.cache_read_tokens, call.cache_write_tokens
+    read_price = price.cache_read if price.cache_read is not None else price.input
+    write_price = price.cache_write if price.cache_write is not None else price.input
+    fresh = max(call.input_tokens - read - write, 0)
+    total = fresh * price.input + read * read_price + write * write_price + call.output_tokens * price.output
     return (total / Decimal(1_000_000)).quantize(Decimal("0.0001"))
 
 
@@ -262,6 +269,7 @@ class UsageLedger:  # pylint: disable=too-many-instance-attributes
         duration_ms: int | None = None,
         finish_reason: str | None = None,
         purpose: str = "answer",
+        provider: str | None = None,
     ) -> None:
         """Добавляет обращение к модели в текущий вопрос; вне вопроса ничего не делает."""
         turn = self._turn
@@ -271,7 +279,7 @@ class UsageLedger:  # pylint: disable=too-many-instance-attributes
         turn.llm.append(
             LlmCall(
                 step, purpose, model, input_tokens, output_tokens, cache_read_tokens,
-                cache_write_tokens, reasoning_tokens, tools_visible, duration_ms, finish_reason,
+                cache_write_tokens, reasoning_tokens, tools_visible, duration_ms, finish_reason, provider,
             )
         )
 
@@ -338,7 +346,8 @@ class UsageLedger:  # pylint: disable=too-many-instance-attributes
                 "INSERT INTO llm_calls VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
-                        turn.turn_id, c.step, c.purpose, self.provider, c.model, c.input_tokens, c.output_tokens,
+                        turn.turn_id, c.step, c.purpose, c.provider or self.provider, c.model,
+                        c.input_tokens, c.output_tokens,
                         c.cache_read_tokens, c.cache_write_tokens, c.reasoning_tokens, c.tools_visible,
                         c.duration_ms, c.finish_reason,
                     )
@@ -360,24 +369,31 @@ class UsageLedger:  # pylint: disable=too-many-instance-attributes
             self._db = None
 
 
-def record_embedding(model: str, input_tokens: int, duration_ms: int) -> None:
-    """Эмбеддинги поиска по знаниям: пишутся в текущий вопрос, если он есть."""
+def record_embedding(model: str, input_tokens: int, duration_ms: int, provider: str | None = None) -> None:
+    """Эмбеддинги поиска по знаниям: пишутся в текущий вопрос, если он есть.
+
+    provider — у кого считаются эмбеддинги; он может отличаться от провайдера чата.
+    """
     ledger = _current.get()
     if ledger is not None:
         ledger.llm_call(
-            model=model, input_tokens=input_tokens, output_tokens=0, duration_ms=duration_ms, purpose="embedding"
+            model=model, input_tokens=input_tokens, output_tokens=0, duration_ms=duration_ms,
+            purpose="embedding", provider=provider,
         )
 
 
 def _price(db: sqlite3.Connection, provider: str, model: str, day: str) -> Price | None:
     row = db.execute(
-        "SELECT rub_per_1m_input, rub_per_1m_output, rub_per_1m_cache_read FROM prices "
+        "SELECT rub_per_1m_input, rub_per_1m_output, rub_per_1m_cache_read, rub_per_1m_cache_write FROM prices "
         "WHERE provider = ? AND model = ? AND valid_from <= ? ORDER BY valid_from DESC LIMIT 1",
         (provider, model, day),
     ).fetchone()
     if row is None:
         return None
-    return Price(Decimal(row[0]), Decimal(row[1]), None if row[2] is None else Decimal(row[2]))
+    return Price(
+        Decimal(row[0]), Decimal(row[1]),
+        None if row[2] is None else Decimal(row[2]), None if row[3] is None else Decimal(row[3]),
+    )
 
 
 # --- отчёт ---
@@ -424,7 +440,7 @@ def report(db: sqlite3.Connection, month: str, by: str = "topic") -> list[dict[s
     sql = (
         f"SELECT {GROUPS[by]}, t.turn_id, t.steps, t.billable_calls, t.duration_ms, "  # nosec B608
         "t.unverified_numbers, substr(t.started_at, 1, 10), l.provider, l.model, l.input_tokens, "
-        "l.output_tokens, l.cache_read_tokens FROM turns t JOIN sessions s USING (session_id) "
+        "l.output_tokens, l.cache_read_tokens, l.cache_write_tokens FROM turns t JOIN sessions s USING (session_id) "
         "LEFT JOIN llm_calls l USING (turn_id) WHERE substr(t.started_at, 1, 7) = ?"
     )
     groups: dict[str, dict[str, Any]] = {}
@@ -445,7 +461,7 @@ def report(db: sqlite3.Connection, month: str, by: str = "topic") -> list[dict[s
         g["input_tokens"] += row[9]
         g["output_tokens"] += row[10]
         g["cache_read_tokens"] += row[11]
-        call = LlmCall(0, "", row[8], row[9], row[10], row[11], 0, 0, None, None, None)
+        call = LlmCall(0, "", row[8], row[9], row[10], row[11], row[12], 0, None, None, None)
         _add_cost(g, db, prices, (row[7], row[8], row[6]), call)
     return [_row(g) for g in sorted(groups.values(), key=lambda v: v["input_tokens"], reverse=True)]
 
@@ -463,6 +479,10 @@ def _print_report(rows: list[dict[str, Any]], month: str, by: str) -> None:
         print("— в cost_rub: для части моделей нет цены; задайте её командой price.")
 
 
+def _opt(value: Decimal | None) -> str | None:
+    return None if value is None else str(value)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Командная строка: отчёт за месяц или цена модели."""
     parser = argparse.ArgumentParser(prog="python -m agent.usage", description="Расход токенов и запросов агентов")
@@ -478,6 +498,7 @@ def main(argv: list[str] | None = None) -> int:
     price.add_argument("--input", required=True, type=Decimal)
     price.add_argument("--output", required=True, type=Decimal)
     price.add_argument("--cache-read", type=Decimal)
+    price.add_argument("--cache-write", type=Decimal)
     price.add_argument("--source", help="ссылка на прайс")
     args = parser.parse_args(argv)
 
@@ -491,9 +512,11 @@ def main(argv: list[str] | None = None) -> int:
             date.fromisoformat(args.valid_from)
             with db:
                 db.execute(
-                    "INSERT OR REPLACE INTO prices VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT OR REPLACE INTO prices (provider, model, valid_from, rub_per_1m_input, "
+                    "rub_per_1m_output, rub_per_1m_cache_read, rub_per_1m_cache_write, source) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (args.provider, args.model, args.valid_from, str(args.input), str(args.output),
-                     None if args.cache_read is None else str(args.cache_read), args.source),
+                     _opt(args.cache_read), _opt(args.cache_write), args.source),
                 )
             print(f"Цена {args.provider}/{args.model} с {args.valid_from} записана.")
             return 0

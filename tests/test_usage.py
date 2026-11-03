@@ -16,6 +16,8 @@ from agent.config import Settings
 from agent.core import FuelCardAgent
 from agent.core_types import Usage
 from agent.db.store import contract_key_for
+from agent.rag.embeddings import provider_for_url
+from agent.safety import BillingBudget, count_tool_spend
 from tests.test_agent import FakeOpti24
 
 
@@ -159,3 +161,53 @@ def test_call_cost_uses_cache_price() -> None:
     price = usage.Price(Decimal("10"), Decimal("40"), Decimal("1"))
     assert usage.call_cost(call, price) == Decimal("2.8000")  # 0,2 млн × 10 + 0,8 млн × 1
     assert usage.call_cost(call, None) is None
+
+
+def test_parallel_tools_count_their_own_billable_calls() -> None:
+    budget = BillingBudget(limit=10)
+
+    async def tool(calls: int, pause: float) -> int:
+        with count_tool_spend() as spent:
+            await asyncio.sleep(pause)
+            budget.spend(calls)
+            await asyncio.sleep(0.02)  # другой инструмент тратит бюджет, пока этот ждёт
+            return spent[0]
+
+    async def both() -> list[int]:
+        return list(await asyncio.gather(tool(2, 0), tool(1, 0.01)))
+
+    assert asyncio.run(both()) == [2, 1]
+    assert budget.spent == 3
+
+
+def test_cache_write_has_its_own_price() -> None:
+    call = usage.LlmCall(1, "answer", "m", 1_000_000, 0, 0, 400_000, 0, None, None, None)
+    price = usage.Price(Decimal("10"), Decimal("40"), Decimal("1"), Decimal("12.5"))
+    assert usage.call_cost(call, price) == Decimal("11.0000")  # 0,6 млн × 10 + 0,4 млн × 12,5
+    no_write_price = usage.Price(Decimal("10"), Decimal("40"), None)
+    assert usage.call_cost(call, no_write_price) == Decimal("10.0000")
+
+
+def test_embedding_keeps_its_provider(tmp_path: Path) -> None:
+    assert provider_for_url("https://embed.example.org/v1/") == "embed.example.org"
+    ledger = usage.UsageLedger(tmp_path / "u.db", provider="claude", mode="read_only", interface="cli", prompt="p")
+    ledger.begin_turn(topic=None, section=None, confident=False, question="q")
+    usage.record_embedding("BAAI/bge-m3", 12, 5, provider="cloudru")
+    ledger.llm_call(model="claude", input_tokens=1, output_tokens=1)
+    ledger.end_turn(answer="a", outcome="answered")
+    assert _rows(tmp_path / "u.db", "SELECT purpose, provider FROM llm_calls ORDER BY purpose") == [
+        ("answer", "claude"), ("embedding", "cloudru"),
+    ]
+
+
+def test_old_database_gets_cache_write_price_column(tmp_path: Path) -> None:
+    path = tmp_path / "u.db"
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "CREATE TABLE prices (provider TEXT NOT NULL, model TEXT NOT NULL, valid_from TEXT NOT NULL, "
+            "rub_per_1m_input TEXT NOT NULL, rub_per_1m_output TEXT NOT NULL, rub_per_1m_cache_read TEXT, "
+            "source TEXT, PRIMARY KEY (provider, model, valid_from))"
+        )
+    assert usage.main(["--db", str(path), "price", "--provider", "p", "--model", "m", "--input", "1",
+                       "--output", "2", "--cache-write", "1.25"]) == 0
+    assert _rows(path, "SELECT rub_per_1m_cache_write FROM prices") == [("1.25",)]

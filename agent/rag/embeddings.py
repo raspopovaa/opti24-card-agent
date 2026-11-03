@@ -18,6 +18,7 @@ import re
 import time
 from collections.abc import Sequence
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 from ..providers import DEFAULT_PROVIDER, PROVIDERS
 from ..usage import record_embedding
@@ -47,9 +48,10 @@ class OpenAIEmbedder:
 
     batch = 32
 
-    def __init__(self, client: Any, model: str) -> None:
+    def __init__(self, client: Any, model: str, provider: str | None = None) -> None:
         self._client = client
         self.model = model
+        self.provider = provider
 
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
         vectors: list[list[float]] = []
@@ -60,7 +62,8 @@ class OpenAIEmbedder:
             )
             usage = getattr(response, "usage", None)
             record_embedding(
-                self.model, getattr(usage, "prompt_tokens", 0) or 0, int((time.monotonic() - started) * 1000)
+                self.model, getattr(usage, "prompt_tokens", 0) or 0, int((time.monotonic() - started) * 1000),
+                self.provider,
             )
             vectors += [list(item.embedding) for item in sorted(response.data, key=lambda d: d.index)]
         return vectors
@@ -81,7 +84,17 @@ def embedder_from_env() -> Embedder | None:
         return None
     from openai import AsyncOpenAI
 
-    return OpenAIEmbedder(AsyncOpenAI(api_key=api_key.strip(), base_url=base_url), model)
+    client = AsyncOpenAI(api_key=api_key.strip(), base_url=base_url)
+    return OpenAIEmbedder(client, model, provider_for_url(base_url))
+
+
+def provider_for_url(base_url: str) -> str:
+    """Имя провайдера для учёта расхода: из списка провайдеров по адресу, иначе хост адреса."""
+    url = base_url.rstrip("/")
+    for name, provider in PROVIDERS.items():
+        if provider.base_url and provider.base_url.rstrip("/") == url:
+            return name
+    return urlsplit(url).hostname or url
 
 
 def _provider_base_url() -> str:

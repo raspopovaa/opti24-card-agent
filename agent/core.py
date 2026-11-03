@@ -21,7 +21,7 @@ from .core_types import STEP_LIMIT_TEXT, Usage
 from .db.store import contract_key_for
 from .prompt import SYSTEM_PROMPT, dated_question
 from .providers import get_provider
-from .safety import ApprovalGate, AskHuman, BillingBudget, operator_name
+from .safety import ApprovalGate, AskHuman, BillingBudget, count_tool_spend, operator_name
 from .tools import build_tools
 from .tools.router import ToolRouter
 from .usage import UsageLedger
@@ -90,25 +90,26 @@ def _recording(tool: Any, evidence: Evidence, agent: FuelCardAgent) -> Any:
     original = tool.call
 
     async def call(tool_input: object) -> Any:
-        spent, started = agent.budget.spent, time.monotonic()
+        started = time.monotonic()
         result: Any = None
         error: str | None = None
-        try:
-            result = await original(tool_input)
-        except Exception as exc:
-            error = type(exc).__name__
-            raise
-        finally:
-            ledger = agent.usage.ledger
-            if ledger is not None:
-                text = result if isinstance(result, str) else ""
-                ledger.tool_call(
-                    tool=tool.name,
-                    billable_calls=agent.budget.spent - spent,
-                    result_chars=len(text),
-                    error_reason=error or _error_reason(text),
-                    duration_ms=int((time.monotonic() - started) * 1000),
-                )
+        with count_tool_spend() as spent:
+            try:
+                result = await original(tool_input)
+            except Exception as exc:
+                error = type(exc).__name__
+                raise
+            finally:
+                ledger = agent.usage.ledger
+                if ledger is not None:
+                    text = result if isinstance(result, str) else ""
+                    ledger.tool_call(
+                        tool=tool.name,
+                        billable_calls=spent[0],
+                        result_chars=len(text),
+                        error_reason=error or _error_reason(text),
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                    )
         evidence.add(result)
         return result
 

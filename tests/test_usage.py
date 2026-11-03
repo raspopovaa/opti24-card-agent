@@ -263,3 +263,10 @@ def test_claude_runner_cap_is_recorded_as_limit(tmp_path: Path, monkeypatch: pyt
     answer = asyncio.run(agent.ask("Сколько запросов осталось в пакете?"))
     assert "Достигнут предел шагов" in answer
     assert _rows(tmp_path / "usage.db", "SELECT outcome, steps FROM turns") == [("limit", 2)]
+
+
+def test_model_call_without_usage_is_still_a_step(tmp_path: Path) -> None:
+    reply = _reply("Готово.", None, 0, 0)
+    reply.usage = None
+    asyncio.run(_agent([reply]).ask("Сколько запросов осталось в пакете?"))
+    assert _rows(tmp_path / "usage.db", "SELECT steps, input_tokens FROM turns") == [(1, 0)]

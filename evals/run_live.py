@@ -113,7 +113,7 @@ async def main(month: str, max_billable: int, runs: int, cases_file: Path | None
         contract_id = await open_session(
             opti24, preferred=preferred_contract_id(env_file), production=is_production(conn), choose=None
         )
-        probe = FuelCardAgent(settings=settings, opti24=opti24, ask_human=_never)
+        probe = FuelCardAgent(settings=settings, opti24=opti24, ask_human=_never, interface="eval")
         usage = await _tool(probe, "get_api_usage")
         left = usage.get("left_in_period")
         print(f"API: {conn.base_url} · договор {contract_id} · модель {settings.provider}/{settings.model}")
@@ -142,7 +142,7 @@ async def main(month: str, max_billable: int, runs: int, cases_file: Path | None
                 if spent >= max_billable:
                     print(f"\nОстановлено: потрачено {spent} тарифицируемых запросов (предел {max_billable}).")
                     return failed_cases + 1
-                agent = FuelCardAgent(settings=settings, opti24=opti24, ask_human=_never)
+                agent = FuelCardAgent(settings=settings, opti24=opti24, ask_human=_never, interface="eval")
                 agent.budget.limit = min(agent.budget.limit, max_billable - spent)  # предел на весь прогон
                 trace = _trace(agent)
                 answer = ""

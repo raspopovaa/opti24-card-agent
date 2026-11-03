@@ -12,3 +12,9 @@ def _knowledge_index(tmp_path, monkeypatch):
     # Векторы базы знаний — во временной папке; эмбеддинги из окружения разработчика не берутся.
     monkeypatch.setenv("AGENT_KNOWLEDGE_DB", str(tmp_path / "knowledge.db"))
     monkeypatch.delenv("AGENT_EMBEDDING_MODEL", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _usage_db(tmp_path, monkeypatch):
+    # Учёт токенов в тестах — во временной папке, не data/usage.db.
+    monkeypatch.setenv("AGENT_USAGE_DB", str(tmp_path / "usage.db"))

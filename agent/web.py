@@ -273,7 +273,7 @@ class Server:
         async with self.chat_lock:
             if self._agent is None:
                 read_only = dataclasses.replace(self.settings, mode=Mode.READ_ONLY)
-                self._agent = FuelCardAgent(settings=read_only, opti24=self.client, ask_human=_no)
+                self._agent = FuelCardAgent(settings=read_only, opti24=self.client, ask_human=_no, interface="web")
             try:
                 return {"answer": await self._agent.ask(question[:1000])}
             except Exception as exc:  # noqa: BLE001 — в страницу уходит короткая причина, а не трейсбек

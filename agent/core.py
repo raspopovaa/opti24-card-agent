@@ -7,22 +7,32 @@
 
 from __future__ import annotations
 
+import json
+import time
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
 from apisdkopti24 import APIClient
 
-from .classifier import Topic, classify, hint, log_question
+from .classifier import Classification, Topic, classify, hint, log_question
 from .config import Settings
-from .core_types import Usage
+from .core_types import STEP_LIMIT_TEXT, Usage
+from .db.store import contract_key_for
 from .prompt import SYSTEM_PROMPT, dated_question
 from .providers import get_provider
-from .safety import ApprovalGate, AskHuman, BillingBudget
+from .safety import ApprovalGate, AskHuman, BillingBudget, operator_name
 from .tools import build_tools
 from .tools.router import ToolRouter
+from .usage import UsageLedger
 from .validation import AnswerCheck, Evidence, check_answer
 from .verification import plan_verification
+
+
+def _contract_key(client: Any) -> str | None:
+    """Хеш договора, как в базе операций и дашборде; сам ID в учёт не пишется."""
+    contract_id = getattr(client, "contract_id", None)
+    return contract_key_for(str(contract_id)) if contract_id else None
 
 
 def make_llm(settings: Settings) -> Any:
@@ -58,8 +68,21 @@ def make_llm(settings: Settings) -> Any:
     )
 
 
-def _recording(tool: Any, evidence: Evidence) -> Any:
-    """Запоминает результат инструмента как данные для проверки ответа.
+def _error_reason(result: object) -> str | None:
+    """Причина ошибки из ответа инструмента (reason от SDK или имя ошибки), если ответ — ошибка."""
+    if not isinstance(result, str) or not result.startswith("{") or '"error"' not in result[:200]:
+        return None
+    try:
+        payload = json.loads(result)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict) or "error" not in payload:
+        return None
+    return str(payload.get("reason") or payload["error"])[:80]
+
+
+def _recording(tool: Any, evidence: Evidence, agent: FuelCardAgent) -> Any:
+    """Запоминает результат инструмента как данные для проверки ответа и пишет вызов в учёт.
 
     Инструмент вызывают и Tool Runner Claude, и цикл OpenAI-совместимых моделей — оба через
     ``tool.call``, поэтому перехват здесь работает для любого провайдера.
@@ -67,7 +90,25 @@ def _recording(tool: Any, evidence: Evidence) -> Any:
     original = tool.call
 
     async def call(tool_input: object) -> Any:
-        result = await original(tool_input)
+        spent, started = agent.budget.spent, time.monotonic()
+        result: Any = None
+        error: str | None = None
+        try:
+            result = await original(tool_input)
+        except Exception as exc:
+            error = type(exc).__name__
+            raise
+        finally:
+            ledger = agent.usage.ledger
+            if ledger is not None:
+                text = result if isinstance(result, str) else ""
+                ledger.tool_call(
+                    tool=tool.name,
+                    billable_calls=agent.budget.spent - spent,
+                    result_chars=len(text),
+                    error_reason=error or _error_reason(text),
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
         evidence.add(result)
         return result
 
@@ -81,6 +122,7 @@ class FuelCardAgent:
     opti24: APIClient
     ask_human: AskHuman
     llm: Any = None
+    interface: str = "cli"  # откуда вопрос: cli, web, eval, demo — для учёта расхода
     usage: Usage = field(default_factory=Usage)
     history: list[dict[str, Any]] = field(default_factory=list)
     tool_calls: list[str] = field(default_factory=list)  # для оценки выбора инструментов
@@ -101,7 +143,16 @@ class FuelCardAgent:
         )
         self.evidence = Evidence()
         self.evidence.add(SYSTEM_PROMPT)
-        self.tools = [_recording(tool, self.evidence) for tool in build_tools(self.opti24, self.budget, self.gate)]
+        self.tools = [_recording(tool, self.evidence, self) for tool in build_tools(self.opti24, self.budget, self.gate)]
+        if self.settings.usage_db is not None:
+            self.usage.ledger = UsageLedger(
+                self.settings.usage_db,
+                provider=self.settings.provider,
+                mode=str(self.settings.mode),
+                interface=self.interface,
+                prompt=SYSTEM_PROMPT,
+                operator=operator_name(),
+            )
         self.tools_by_name = {tool.name: tool for tool in self.tools}
         # Двухуровневый выбор нужен там, где нет кеша промпта и модели слабее: у Claude полный набор
         # из 27 схем дёшев (кеш) и проверен на evals, поэтому для него маршрутизатор не включается.
@@ -111,12 +162,32 @@ class FuelCardAgent:
     async def ask(self, question: str) -> str:
         if self.llm is None:
             self.llm = make_llm(self.settings)
+        found = classify(question)
+        ledger: UsageLedger | None = self.usage.ledger
+        if ledger is not None:
+            ledger.contract_key = _contract_key(self.opti24)
+            primary = found.primary
+            ledger.begin_turn(
+                topic=primary.id if primary else None,
+                section=primary.section if primary else None,
+                confident=found.confident,
+                question=question,
+            )
+        answer, outcome = "", "error"
+        try:
+            answer, outcome = await self._answer(question, found)
+            return answer
+        finally:
+            if ledger is not None:
+                ledger.end_turn(answer=answer, outcome=outcome, unverified_numbers=len(self.last_check.unverified))
+
+    async def _answer(self, question: str, found: Classification) -> tuple[str, str]:
+        """Ответ на вопрос и его исход для учёта: answered, limit или empty."""
         # Дата идёт в сообщении пользователя, а не в системной инструкции:
         # так инструкция остаётся неизменной и целиком берётся из кеша.
         user_message = {"role": "user", "content": dated_question(question, date.today())}
         # Тема вопроса и подсказка по ней идут модели только с текущим вопросом: в истории они бы
         # устарела и сбивала следующие вопросы.
-        found = classify(question)
         log_question(question, found)
         note = hint(found, follow_up=bool(self.history))
         current = {**user_message, "content": f"{user_message['content']}\n{note}"} if note else user_message
@@ -143,6 +214,9 @@ class FuelCardAgent:
             )
             self.tool_calls += [name for name, _ in called]
             self.tool_inputs += called
+        outcome = "answered" if final_text else "empty"
+        if final_text.startswith(STEP_LIMIT_TEXT):
+            outcome = "limit"
 
         # Ответ сверяется с данными до того, как его увидит человек: найденное дописывается к ответу.
         self.last_check = check_answer(final_text, self.evidence, self.tool_calls[calls_before:])
@@ -157,7 +231,7 @@ class FuelCardAgent:
         # В историю кладём только вопрос и итоговый ответ. Тяжёлые результаты
         # инструментов остаются за кадром, и следующий вопрос стоит дешевле.
         self.history += [user_message, {"role": "assistant", "content": final_text}]
-        return final_text or "Не удалось получить ответ: попробуйте переформулировать вопрос."
+        return final_text or "Не удалось получить ответ: попробуйте переформулировать вопрос.", outcome
 
     async def _recheck(
         self, answer: str, topic: Topic | None, question_calls: list[tuple[str, dict[str, Any]]]
@@ -201,8 +275,19 @@ class FuelCardAgent:
             max_iterations=self.settings.max_iterations,
         )
         final_text = ""
+        ledger = self.usage.ledger
+        mark, tool_ms = time.monotonic(), ledger.tool_ms() if ledger else 0
         async for message in runner:
-            self.usage.add_anthropic(message.usage)
+            # Tool Runner выполняет инструменты между ответами модели: их время вычитается.
+            now, spent_on_tools = time.monotonic(), (ledger.tool_ms() if ledger else 0)
+            self.usage.add_anthropic(
+                message.usage,
+                model=self.settings.model,
+                tools_visible=len(self.tools),
+                duration_ms=max(int((now - mark) * 1000) - (spent_on_tools - tool_ms), 0),
+                finish_reason=getattr(message, "stop_reason", None),
+            )
+            mark, tool_ms = now, spent_on_tools
             uses = [b for b in message.content if b.type == "tool_use"]
             self.tool_calls += [b.name for b in uses]
             self.tool_inputs += [(b.name, dict(b.input)) for b in uses]

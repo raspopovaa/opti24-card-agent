@@ -15,10 +15,12 @@ import hashlib
 import math
 import os
 import re
+import time
 from collections.abc import Sequence
 from typing import Any, Protocol
 
 from ..providers import DEFAULT_PROVIDER, PROVIDERS
+from ..usage import record_embedding
 
 HASH_MODEL = "hash"
 HASH_DIM = 512
@@ -52,8 +54,13 @@ class OpenAIEmbedder:
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
         vectors: list[list[float]] = []
         for start in range(0, len(texts), self.batch):
+            started = time.monotonic()
             response = await self._client.embeddings.create(
                 model=self.model, input=list(texts[start : start + self.batch])
+            )
+            usage = getattr(response, "usage", None)
+            record_embedding(
+                self.model, getattr(usage, "prompt_tokens", 0) or 0, int((time.monotonic() - started) * 1000)
             )
             vectors += [list(item.embedding) for item in sorted(response.data, key=lambda d: d.index)]
         return vectors

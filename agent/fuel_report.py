@@ -125,19 +125,26 @@ def read_rows(data: bytes) -> list[ReportRow]:
 
 
 @dataclass(slots=True)
-class _Acc:
+class _Acc:  # pylint: disable=too-many-instance-attributes
     operations: int = 0
     liters: Decimal = Decimal("0")
     station_sum: Decimal = Decimal("0")
     discount: Decimal = Decimal("0")
     fee: Decimal = Decimal("0")
     paid: Decimal = Decimal("0")
+    # Только строки в литрах: цена литра не должна включать салфетки и напитки.
+    fuel_station_sum: Decimal = Decimal("0")
+    fuel_fee: Decimal = Decimal("0")
+    fuel_paid: Decimal = Decimal("0")
 
     def add(self, row: ReportRow) -> None:
         """Добавить строку в итог."""
         self.operations += 1
         if row.liters:
             self.liters += row.quantity
+            self.fuel_station_sum += row.station_sum
+            self.fuel_fee += row.fee
+            self.fuel_paid += row.paid
         self.station_sum += row.station_sum
         self.discount += row.discount
         self.fee += row.fee
@@ -156,10 +163,10 @@ class _Acc:
         if self.paid:
             out["service_fee_percent"] = str((self.fee / self.paid * 100).quantize(Decimal("0.01")))
         if self.liters:
-            out["price_per_liter"] = rub(self.paid / self.liters)
-            out["price_with_fee_per_liter"] = rub((self.paid + self.fee) / self.liters)
-            out["station_price_per_liter"] = rub(self.station_sum / self.liters)
-            out["service_fee_per_liter"] = rub(self.fee / self.liters)
+            out["price_per_liter"] = rub(self.fuel_paid / self.liters)
+            out["price_with_fee_per_liter"] = rub((self.fuel_paid + self.fuel_fee) / self.liters)
+            out["station_price_per_liter"] = rub(self.fuel_station_sum / self.liters)
+            out["service_fee_per_liter"] = rub(self.fuel_fee / self.liters)
         return out
 
 
@@ -297,7 +304,8 @@ def summarize_report(rows: list[ReportRow], rules: AnomalyRules | None = None, t
         "fields": (
             "paid — «Сумма к оплате» без сбора; service_fee — «Сумма сервисного сбора» из отчёта, "
             "показан положительным; paid_with_fee = paid + service_fee; discount < 0 — наценка к цене стелы; "
-            "цены за литр — суммы, делённые на литры. Всё посчитано кодом из файла отчёта."
+            "цены за литр — суммы строк в литрах, делённые на литры, без нетопливных товаров. "
+            "Всё посчитано кодом из файла отчёта."
         ),
     }
     if hints:

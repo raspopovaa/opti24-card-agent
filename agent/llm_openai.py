@@ -175,11 +175,15 @@ async def run_openai_loop(
         u = response.usage
         if u is not None:
             details = getattr(u, "completion_tokens_details", None)
+            prompt_details = getattr(u, "prompt_tokens_details", None)
             usage.add_tokens(
                 input_tokens=u.prompt_tokens or 0,
                 output_tokens=u.completion_tokens or 0,
-                # DeepSeek отдаёт попадания в кеш отдельным полем
-                cache_read_tokens=getattr(u, "prompt_cache_hit_tokens", 0) or 0,
+                # DeepSeek отдаёт попадания в кеш полем верхнего уровня, OpenAI — в prompt_tokens_details
+                cache_read_tokens=getattr(u, "prompt_cache_hit_tokens", 0)
+                or getattr(prompt_details, "cached_tokens", 0)
+                or 0,
+                cache_write_tokens=getattr(prompt_details, "cache_write_tokens", 0) or 0,
                 model=model,
                 reasoning_tokens=getattr(details, "reasoning_tokens", 0) or 0,
                 tools_visible=len(schemas),

@@ -277,10 +277,11 @@ class FuelCardAgent:
             cache_control={"type": "ephemeral"},
             max_iterations=self.settings.max_iterations,
         )
-        final_text = ""
+        final_text, stop_reason = "", None
         ledger = self.usage.ledger
         mark, tool_ms = time.monotonic(), ledger.tool_ms() if ledger else 0
         async for message in runner:
+            stop_reason = getattr(message, "stop_reason", None)
             # Tool Runner выполняет инструменты между ответами модели: их время вычитается.
             now, spent_on_tools = time.monotonic(), (ledger.tool_ms() if ledger else 0)
             self.usage.add_anthropic(
@@ -288,7 +289,7 @@ class FuelCardAgent:
                 model=self.settings.model,
                 tools_visible=len(self.tools),
                 duration_ms=max(int((now - mark) * 1000) - (spent_on_tools - tool_ms), 0),
-                finish_reason=getattr(message, "stop_reason", None),
+                finish_reason=stop_reason,
             )
             mark, tool_ms = now, spent_on_tools
             uses = [b for b in message.content if b.type == "tool_use"]
@@ -297,4 +298,10 @@ class FuelCardAgent:
             texts = [block.text for block in message.content if block.type == "text"]
             if texts:
                 final_text = "\n".join(texts)
+        # Tool Runner останавливается на max_iterations после ответа с вызовом инструмента:
+        # итогового ответа нет, как и у предела шагов в цикле OpenAI-совместимых моделей.
+        if stop_reason == "tool_use":
+            if final_text:
+                return f"{final_text}\n\n{STEP_LIMIT_TEXT}: ответ может быть неполным, уточните вопрос."
+            return f"{STEP_LIMIT_TEXT}: уточните вопрос."
         return final_text

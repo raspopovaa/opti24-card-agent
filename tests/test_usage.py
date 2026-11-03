@@ -233,3 +233,33 @@ def test_failed_turn_does_not_inherit_previous_unverified_numbers(tmp_path: Path
     rows = _rows(tmp_path / "usage.db", "SELECT outcome, unverified_numbers FROM turns ORDER BY rowid")
     assert rows[0][1] > 0
     assert rows[1] == ("error", 0)
+
+
+def test_openai_cache_counts_from_prompt_details(tmp_path: Path) -> None:
+    reply = _reply("Готово.", None, 1000, 10)
+    reply.usage = NS(
+        prompt_tokens=1000, completion_tokens=10, prompt_tokens_details=NS(cached_tokens=600, cache_write_tokens=100)
+    )
+    asyncio.run(_agent([reply]).ask("Сколько запросов осталось в пакете?"))
+    assert _rows(tmp_path / "usage.db", "SELECT cache_read_tokens, cache_write_tokens FROM llm_calls") == [(600, 100)]
+
+
+def test_claude_runner_cap_is_recorded_as_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_PROVIDER", "claude")
+    stats = NS(input_tokens=10, output_tokens=5, cache_read_input_tokens=0, cache_creation_input_tokens=0)
+    use = NS(type="tool_use", name="get_api_usage", input={})
+    capped = [NS(usage=stats, stop_reason="tool_use", content=[NS(type="text", text="Проверяю."), use])] * 2
+
+    class Runner:
+        def __aiter__(self) -> Any:
+            return self._gen()
+
+        async def _gen(self) -> Any:
+            for message in capped:
+                yield message
+
+    agent = _agent([])
+    agent.llm = NS(beta=NS(messages=NS(tool_runner=lambda **_: Runner())))
+    answer = asyncio.run(agent.ask("Сколько запросов осталось в пакете?"))
+    assert "Достигнут предел шагов" in answer
+    assert _rows(tmp_path / "usage.db", "SELECT outcome, steps FROM turns") == [("limit", 2)]

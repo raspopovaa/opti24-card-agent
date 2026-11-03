@@ -46,7 +46,8 @@ def _rows(path: Path, sql: str) -> list[tuple[Any, ...]]:
         return db.execute(sql).fetchall()
 
 
-def test_question_writes_turn_model_steps_and_tool_calls(tmp_path: Path) -> None:
+def test_question_writes_turn_model_steps_and_tool_calls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENT_TOOL_ROUTING", "off")  # модель видит все инструменты, как Claude
     summary = NS(id="t1", function=NS(name="get_contract_summary", arguments="{}"))
     first = _reply(None, [summary], 1000, 40, cached=200)
     agent = _agent([first, _reply("Доступно 123 139,19 ₽.", None, 1500, 60)])

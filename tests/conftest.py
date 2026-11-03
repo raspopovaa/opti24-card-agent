@@ -18,3 +18,5 @@ def _knowledge_index(tmp_path, monkeypatch):
 def _usage_db(tmp_path, monkeypatch):
     # Учёт токенов в тестах — во временной папке, не data/usage.db.
     monkeypatch.setenv("AGENT_USAGE_DB", str(tmp_path / "usage.db"))
+    # Перепроверка ответа из окружения разработчика меняет число вызовов инструментов в тестах.
+    monkeypatch.delenv("AGENT_VERIFY_ANSWER", raising=False)

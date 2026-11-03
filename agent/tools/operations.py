@@ -428,7 +428,12 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         if not status_ok:
             causes.append(f"карта в статусе {card.status}: это может блокировать заправку")
             steps.append("Проверить блокировку и при необходимости разблокировать по решению человека.")
-        if purchase.get("allowed") is False:
+        if purchase.get("allowed") is False and isinstance(refusal := purchase.get("decoded"), dict):
+            causes.append(
+                f"процессинг отказал в покупке с кодом {purchase.get('processing_code')}: {refusal['meaning']}"
+            )
+            steps.append(str(refusal["action"]))
+        elif purchase.get("allowed") is False:
             causes.append("сервер отвечает, что покупка этого товара по карте на этой АЗС невозможна")
             steps.append("Сверить остальные проверки: они подскажут, какое правило мешает.")
         if exceeded_limits:

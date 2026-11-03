@@ -14,11 +14,12 @@ from pathlib import Path
 from typing import Any
 
 from apisdkopti24 import APIClient, APIError
-from apisdkopti24.errors import RequestValidationError, ServerError
+from apisdkopti24.errors import ProcessingRefusalError, RequestValidationError, ServerError
 from apisdkopti24.models.transactions import TransactionItemV2
 
 from ..config import Mode
 from ..db import OperationStore, open_store
+from ..decline_codes import decode as decode_decline
 from ..knowledge import load_sections
 from ..money import to_decimal
 from ..rag import KnowledgeIndex, embedder_from_env, index_path
@@ -37,6 +38,8 @@ from .common import (
 )
 
 # Поиск карты по ID для подтверждения: страниц бесплатного списка карт и карт на странице.
+# Ответы 5xx, которые SDK распознал как «изменение не выполнено»: здесь исход известен.
+NOT_APPLIED_REASONS = frozenset({"region_limit_point_id"})
 CARD_LOOKUP_PAGES = 20
 CARD_LOOKUP_PAGE_SIZE = 100
 
@@ -292,6 +295,12 @@ def make_context(
         station_id = getattr(station, "id", None) or poi_id
         try:
             response = await client.final_prices.check_purchase(card_id=card_id, poi_id=station_id, goods=goods)
+        except ProcessingRefusalError as exc:
+            # Отказ процессинга — это и есть ответ проверки: покупка не пройдёт, код в тексте ответа.
+            refused: dict[str, object] = {"allowed": False, "goods": goods, "processing_code": exc.processing_code}
+            if exc.processing_code is not None:
+                refused["decoded"] = decode_decline(str(exc.processing_code))
+            return refused
         except (APIError, RequestValidationError) as exc:
             # Метод только на рабочем API и только для роли «Администратор».
             return {"allowed": None, "skipped": f"проверка не выполнена: {type(exc).__name__}"}
@@ -381,7 +390,8 @@ def make_context(
             gate.outcome(approval, "not_sent", {"error": type(exc).__name__})
             return None, _error(exc)
         except APIError as exc:
-            if not isinstance(exc, ServerError):
+            # 4xx и распознанные ответы «не создано» (лимит с ID АЗС вида -1-…) — изменение не выполнено.
+            if not isinstance(exc, ServerError) or exc.context.reason in NOT_APPLIED_REASONS:
                 gate.outcome(approval, "error", {"error": type(exc).__name__, "http": exc.http_status_code})
                 return None, _error(exc)
             failure: Exception = exc

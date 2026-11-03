@@ -125,7 +125,7 @@ def read_rows(data: bytes) -> list[ReportRow]:
 
 
 @dataclass(slots=True)
-class _Acc:
+class _Acc:  # pylint: disable=too-many-instance-attributes
     operations: int = 0
     liters: Decimal = Decimal("0")
     station_sum: Decimal = Decimal("0")

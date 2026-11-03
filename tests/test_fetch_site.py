@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from agent.ingest import Store
-from scripts.fetch_site import crawl, guess_kind, ingest, main
+from scripts.fetch_site import clean_link_text, crawl, guess_kind, ingest, main
 
 HOME = "https://www.opti-24.ru/"
 PAGE = (
@@ -92,15 +92,15 @@ def test_ingest_adds_public_documents_and_skips_unchanged(tmp_path: Path) -> Non
     site, calls = make_site()
     out, store = tmp_path / "site", Store(tmp_path / "store")
     crawl(out, delay=0, fetch=fake(site, calls))
-    added, skipped = ingest(out, store)
-    assert len(added) == 3 and not skipped
+    added, skipped, archived = ingest(out, store)
+    assert len(added) == 3 and not skipped and not archived
     docs = store.documents()
     assert {d.classification for d in docs} == {"public"}
     assert any(d.source == "https://www.opti-24.ru/tariffs/" for d in docs)
     texts = " ".join(c["text"] for _, c in store.active_chunks(("public",)))
     assert "Тариф Drive" in texts and "Меню" not in texts
-    added, skipped = ingest(out, store)
-    assert not added and len(skipped) == 3
+    added, skipped, archived = ingest(out, store)
+    assert not added and len(skipped) == 3 and not archived
 
 
 def test_main_reports_empty_site(tmp_path: Path, capsys) -> None:
@@ -122,3 +122,69 @@ def test_guess_kind() -> None:
     assert guess_kind("https://cdn.opti-24.ru/upload/api_prices.docx", "") == "tariff"
     assert guess_kind("https://www.opti-24.ru/dogovor/", "Договор") == "regulation"
     assert guess_kind("https://www.opti-24.ru/about/", "О компании") == "other"
+    assert guess_kind("https://www.opti-24.ru/about/", "О нас — ценности и подход") == "other"
+    assert guess_kind("https://www.opti-24.ru/contacts/", "Контакты – как связаться с нами") == "other"
+
+
+def test_clean_link_text() -> None:
+    assert clean_link_text("14.11.202327.3 KbДоверенность на получение сервисных карт.docx Скачать") == (
+        "Доверенность на получение сервисных карт"
+    )
+    assert clean_link_text("Договор") == "Договор"
+
+
+def test_one_address_per_page_and_no_news(tmp_path: Path) -> None:
+    site, calls = make_site(**{
+        HOME: page(
+            "Топливные карты", "Топливные карты для юридических лиц и автопарков по всей стране.",
+            ("/azs/", "АЗС"), ("/azs", "АЗС"), ("https://opti-24.ru/azs/?owntype=opti", "АЗС ОПТИ"),
+            ("/news/1/", "Новость"),
+        ),
+        "https://www.opti-24.ru/azs/": page("АЗС", "Список АЗС, где принимают топливные карты компании."),
+    })
+    crawl(tmp_path, delay=0, fetch=fake(site, calls))
+    assert calls.count("https://www.opti-24.ru/azs/") == 1
+    assert not any("news" in u or "owntype" in u for u in calls)
+
+
+def test_news_with_flag(tmp_path: Path) -> None:
+    site, calls = make_site(**{HOME: page("Главная", "Главная страница сайта о топливных картах.", ("/news/1/", "Новость"))})
+    crawl(tmp_path, delay=0, with_news=True, fetch=fake(site, calls))
+    assert "https://www.opti-24.ru/news/1/" in calls
+
+
+def test_svg_title_does_not_leak_into_page_title(tmp_path: Path) -> None:
+    body = (
+        "<html><head><title>Документы</title></head><body><svg><title>x-circle</title></svg>"
+        "<p>Формы и соглашения</p></body></html>"
+    ).encode()
+    site, calls = make_site(**{HOME: (200, "text/html", body)})
+    items = crawl(tmp_path, delay=0, fetch=fake(site, calls))
+    assert items[0].title == "Документы"
+
+
+def test_prune_archives_pages_gone_from_site(tmp_path: Path) -> None:
+    site, calls = make_site()
+    out, store = tmp_path / "site", Store(tmp_path / "store")
+    crawl(out, delay=0, fetch=fake(site, calls))
+    ingest(out, store)
+    site["https://www.opti-24.ru/"] = page("Топливные карты", "Топливные карты для юридических лиц и автопарков по всей стране.")
+    crawl(out, delay=0, fetch=fake(site, calls))
+    _, _, archived = ingest(out, store, prune=False)
+    assert not archived
+    _, _, archived = ingest(out, store, prune=True)
+    assert len(archived) == 2
+    assert {d.source for d in store.documents() if d.status == "active"} == {HOME}
+
+
+def test_relabelled_page_replaces_old_document(tmp_path: Path) -> None:
+    site, calls = make_site()
+    out, store = tmp_path / "site", Store(tmp_path / "store")
+    crawl(out, delay=0, fetch=fake(site, calls))
+    ingest(out, store)
+    site["https://www.opti-24.ru/tariffs/"] = page("Тарифы 2026", "Новый тариф Drive для дизельного топлива на АЗС сети.")
+    crawl(out, delay=0, fetch=fake(site, calls))
+    _, _, archived = ingest(out, store)
+    assert archived == ["opti-24.ru: Тарифы (https://www.opti-24.ru/tariffs/)"]
+    active = [d for d in store.documents() if d.status == "active" and d.source.endswith("/tariffs/")]
+    assert [d.title for d in active] == ["opti-24.ru: Тарифы 2026"]

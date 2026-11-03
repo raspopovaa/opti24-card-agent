@@ -148,7 +148,8 @@ def test_one_address_per_page_and_no_news(tmp_path: Path) -> None:
 
 
 def test_news_with_flag(tmp_path: Path) -> None:
-    site, calls = make_site(**{HOME: page("Главная", "Главная страница сайта о топливных картах.", ("/news/1/", "Новость"))})
+    home = page("Главная", "Главная страница сайта о топливных картах.", ("/news/1/", "Новость"))
+    site, calls = make_site(**{HOME: home})
     crawl(tmp_path, delay=0, with_news=True, fetch=fake(site, calls))
     assert "https://www.opti-24.ru/news/1/" in calls
 
@@ -168,7 +169,7 @@ def test_prune_archives_pages_gone_from_site(tmp_path: Path) -> None:
     out, store = tmp_path / "site", Store(tmp_path / "store")
     crawl(out, delay=0, fetch=fake(site, calls))
     ingest(out, store)
-    site["https://www.opti-24.ru/"] = page("Топливные карты", "Топливные карты для юридических лиц и автопарков по всей стране.")
+    site[HOME] = page("Топливные карты", "Топливные карты для юридических лиц и автопарков по всей стране.")
     crawl(out, delay=0, fetch=fake(site, calls))
     _, _, archived = ingest(out, store, prune=False)
     assert not archived
@@ -182,7 +183,7 @@ def test_relabelled_page_replaces_old_document(tmp_path: Path) -> None:
     out, store = tmp_path / "site", Store(tmp_path / "store")
     crawl(out, delay=0, fetch=fake(site, calls))
     ingest(out, store)
-    site["https://www.opti-24.ru/tariffs/"] = page("Тарифы 2026", "Новый тариф Drive для дизельного топлива на АЗС сети.")
+    site[HOME + "tariffs/"] = page("Тарифы 2026", "Новый тариф Drive для дизельного топлива на АЗС сети.")
     crawl(out, delay=0, fetch=fake(site, calls))
     _, _, archived = ingest(out, store)
     assert archived == ["opti-24.ru: Тарифы (https://www.opti-24.ru/tariffs/)"]

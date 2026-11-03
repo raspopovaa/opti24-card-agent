@@ -257,14 +257,14 @@ def _archive(store: Store, stale: Callable[[Document], bool]) -> list[str]:
 
 
 def main(argv: list[str] | None = None, fetch: Fetch = http_fetch) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(description=__doc__.split("\n", maxsplit=1)[0])
     parser.add_argument("--out", type=Path, required=True, help="папка для скачанных файлов")
     parser.add_argument("--start", default=START_URL)
     parser.add_argument("--max-pages", type=int, default=60)
     parser.add_argument("--delay", type=float, default=1.0, help="пауза между запросами, секунды")
     parser.add_argument("--with-news", action="store_true", help="обходить и раздел новостей")
     parser.add_argument("--ingest", action="store_true", help="загрузить в базу знаний")
-    parser.add_argument("--prune", action="store_true", help="убрать в архив документы сайта, которых нет среди скачанных")
+    parser.add_argument("--prune", action="store_true", help="в архив документы сайта, которых нет среди скачанных")
     parser.add_argument("--store", type=Path, help="папка хранилища (по умолчанию knowledge_store/)")
     args = parser.parse_args(argv)
 

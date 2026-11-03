@@ -330,7 +330,6 @@ class UsageLedger:  # pylint: disable=too-many-instance-attributes
                         self._mode, self.provider, self.contract_key, self.operator, self.started_at,
                     ),
                 )
-                self._session_saved = True
             db.execute(
                 "INSERT INTO turns VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
@@ -361,6 +360,7 @@ class UsageLedger:  # pylint: disable=too-many-instance-attributes
                     for t in turn.tools
                 ],
             )
+        self._session_saved = True  # только после commit: при откате сессия запишется со следующим вопросом
 
     def close(self) -> None:
         """Закрывает соединение с базой."""

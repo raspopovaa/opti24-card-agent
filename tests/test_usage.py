@@ -283,3 +283,23 @@ def test_model_report_keeps_turn_metrics_on_answer_model(tmp_path: Path) -> None
         rows = {r["group"]: r for r in usage.report(db, ledger.started_at[:7], by="model")}
     assert (rows["cloudru/chat"]["questions"], rows["cloudru/chat"]["avg_steps"]) == (1, 1.0)
     assert (rows["cloudru/bge-m3"]["questions"], rows["cloudru/bge-m3"]["avg_steps"], rows["cloudru/bge-m3"]["input_tokens"]) == (0, None, 12)
+
+
+def test_session_is_written_again_after_rolled_back_turn(tmp_path: Path) -> None:
+    path = tmp_path / "u.db"
+    ledger = usage.UsageLedger(path, provider="cloudru", mode="read_only", interface="cli", prompt="p")
+    ledger.begin_turn(topic=None, section=None, confident=False, question="q")
+    ledger.end_turn(answer="a", outcome="answered")
+    ledger.begin_turn(topic=None, section=None, confident=False, question="q")
+    ledger.end_turn(answer="a", outcome="answered")
+    with sqlite3.connect(path) as db:
+        db.execute("DELETE FROM sessions")
+    ledger._session_saved = False  # pylint: disable=protected-access
+    first = _rows(path, "SELECT turn_id FROM turns ORDER BY rowid")[0][0]
+    ledger.begin_turn(topic=None, section=None, confident=False, question="q")
+    ledger._turn.turn_id = first  # type: ignore[union-attr]  # pylint: disable=protected-access
+    ledger.end_turn(answer="a", outcome="answered")  # дубль turn_id: транзакция откатывается
+    assert _rows(path, "SELECT COUNT(*) FROM sessions") == [(0,)]
+    ledger.begin_turn(topic=None, section=None, confident=False, question="q")
+    ledger.end_turn(answer="a", outcome="answered")
+    assert _rows(path, "SELECT COUNT(*) FROM sessions") == [(1,)]

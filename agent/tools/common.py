@@ -57,7 +57,7 @@ def _error(exc: Exception) -> str:
                 payload["advice"] = advice
         if context.hint:
             payload["hint"] = context.hint[:300]
-        if not context.retryable:
+        if not context.transient:
             payload["retry"] = "Повтор того же запроса не поможет: не вызывай инструмент снова с теми же данными."
     if (code := getattr(exc, "processing_code", None)) is not None:
         payload["processing_code"] = code

@@ -7,7 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from apisdkopti24.errors import ServerError, build_api_error
+from apisdkopti24.error_recognition import build_api_error
+from apisdkopti24.errors import ServerError
 
 from agent.config import Mode
 from agent.tools.common import _error

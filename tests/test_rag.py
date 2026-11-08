@@ -204,3 +204,29 @@ def test_lookup_knowledge_tells_agent_to_ask(tmp_path: Path, monkeypatch: pytest
     found = json.loads(asyncio.run(tools["lookup_knowledge"].call({"question": "сервисный сбор, посеял"})))
 
     assert found["confidence"] == "low" and "ответь по первому разделу" in found["message"]
+
+
+def test_website_sections_rank_after_summaries_and_need_higher_similarity() -> None:
+    from agent.knowledge import Section
+    from agent.rag.index import WEB_MIN_SIMILARITY
+
+    summary = Section("a.md", "Договор", "Блокировка карты", "", "Карту блокируют в личном кабинете.")
+    company = Section(
+        "r1", "Регламент", "Блокировка", "", "Регламент блокировки карт.", source="Регламент (regulation, r.docx)"
+    )
+    web = Section("w1", "Сайт", "Карты", "", "Карта ОПТИ 24.", source="Сайт (other, https://www.opti-24.ru/)", web=True)
+    vectors = {"q": [1.0, 0.0], summary.text: [0.6, 0.8], company.text: [0.7, 0.71], web.text: [0.99, 0.1]}
+
+    class Fixed:
+        model = "fixed"
+
+        async def embed(self, texts):
+            return [vectors.get(t.split("\n")[-1], vectors.get(t, [0.0, 1.0])) for t in texts]
+
+    index = KnowledgeIndex([summary, company, web], Fixed(), None, min_similarity=0.5)
+    found, _ = asyncio.run(index.search("q"))
+    assert [f["section"] for f in found] == ["Блокировка", "Блокировка карты", "Карты"]  # сайт последним
+    vectors[web.text] = [WEB_MIN_SIMILARITY - 0.05, 0.9]
+    index = KnowledgeIndex([summary, company, web], Fixed(), None, min_similarity=0.5)
+    found, _ = asyncio.run(index.search("q"))
+    assert "Карты" not in [f["section"] for f in found]

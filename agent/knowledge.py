@@ -43,6 +43,7 @@ class Section:
     edition: str
     text: str
     source: str = ""  # путь или название для ответа; пусто — выжимка из docs/knowledge
+    web: bool = False  # страница или файл сайта (источник — URL): отвечает после выжимок и документов
 
 
 def _stems(text: str) -> set[str]:
@@ -78,6 +79,7 @@ def load_store_sections(store_dir: Path | None = None) -> list[Section]:
             edition=" ".join(x for x in (doc.version, f"с {doc.valid_from}" if doc.valid_from else "") if x),
             text=chunk["text"],
             source=f"{doc.title} ({doc.kind}, {doc.source})",
+            web=doc.source.startswith(("http://", "https://")),
         )
         for doc, chunk in store.active_chunks(allow)
     ]

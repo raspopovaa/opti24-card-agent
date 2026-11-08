@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from agent.ingest import Store
-from scripts.fetch_site import clean_link_text, crawl, guess_kind, ingest, main
+from scripts.fetch_site import clean_link_text, crawl, document_title, guess_kind, ingest, main
 
 HOME = "https://www.opti-24.ru/"
 PAGE = (
@@ -189,3 +189,13 @@ def test_relabelled_page_replaces_old_document(tmp_path: Path) -> None:
     assert archived == ["opti-24.ru: Тарифы (https://www.opti-24.ru/tariffs/)"]
     active = [d for d in store.documents() if d.status == "active" and d.source.endswith("/tariffs/")]
     assert [d.title for d in active] == ["opti-24.ru: Тарифы 2026"]
+
+
+def test_generic_link_text_gets_title_from_document(tmp_path: Path) -> None:
+    doc = tmp_path / "x.txt"
+    doc.write_text("\n# Политика обработки персональных данных\nТекст политики.", encoding="utf-8")
+    assert document_title("здесь", doc) == "Политика обработки персональных данных"
+    assert document_title("Договор поставки товара", doc) == "Договор поставки товара"
+    page = tmp_path / "p.html"
+    page.write_text("<p>Длинный абзац страницы</p>", encoding="utf-8")
+    assert document_title("Тарифы", page) == "Тарифы"

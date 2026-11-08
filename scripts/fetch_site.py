@@ -36,7 +36,7 @@ from urllib.parse import urldefrag, urljoin, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agent.ingest import MAX_FILE_BYTES, Document, IngestError, Store  # noqa: E402
+from agent.ingest import MAX_FILE_BYTES, Document, IngestError, Store, extract_text  # noqa: E402
 
 START_URL = "https://www.opti-24.ru/"
 PAGE_HOSTS = {"www.opti-24.ru", "opti-24.ru"}
@@ -229,6 +229,18 @@ def _unique_titles(items: list[Item]) -> None:
             item.title = f"{item.title} ({urlparse(item.url).path})"
 
 
+def document_title(title: str, path: Path) -> str:
+    """Название документа; если ссылка была «здесь» или «моих данных» — первая строка его текста."""
+    if len(title.split()) >= 3 or path.suffix == ".html":  # у страницы название из <title>
+        return title
+    try:
+        lines = [line.strip(" #\t") for line in extract_text(path).splitlines()]
+    except IngestError:
+        return title
+    first = next((line for line in lines if len(line.split()) >= 2), "")
+    return " ".join(first.split())[:120] or title
+
+
 def ingest(out: Path, store: Store, *, prune: bool = False) -> tuple[list[str], list[str], list[str]]:
     """Загружает сохранённые файлы с грифом public; возвращает (загружено, пропущено, в архиве).
 
@@ -243,7 +255,7 @@ def ingest(out: Path, store: Store, *, prune: bool = False) -> tuple[list[str], 
         version = f"{date.today().isoformat()}-{hashlib.sha256(path.read_bytes()).hexdigest()[:6]}"
         try:
             doc = store.add(
-                path, title=f"opti-24.ru: {item.title}", kind=item.kind,
+                path, title=f"opti-24.ru: {document_title(item.title, path)}", kind=item.kind,
                 version=version, classification="public", source=item.url,
             )
         except IngestError as exc:

@@ -177,3 +177,43 @@ def test_partial_load_is_not_saved(tmp_path: Path) -> None:
         pass
 
     assert store.lookup(date(2026, 10, 1), date(2026, 10, 9), None, LOADED) is None
+
+
+def test_dictionary_is_cached_for_a_day(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    items = [{"id": "1-CK237", "name": "ДТ", "active": True}]
+    store.save_dictionary("ProductGroup", items, LOADED)
+    assert store.dictionary("ProductGroup", LOADED + timedelta(hours=23)) == items
+    assert store.dictionary("ProductGroup", LOADED + timedelta(hours=24)) is None
+    assert store.dictionary("Goods", LOADED) is None
+    store.close()
+
+
+def test_next_session_reads_dictionary_from_database(tmp_path: Path) -> None:
+    from apisdkopti24.models.dictionaries import DictionaryItem
+
+    calls: list[str] = []
+
+    async def get_dictionary(*, name: str, **_: object) -> NS:
+        calls.append(name)
+        item = DictionaryItem.model_validate({"id": "1-CK237", "name": "ДТ", "active": True, "type": "1-CK231"})
+        return NS(data=NS(result=[item], total_count=1))
+
+    client = NS(contract_id=CONTRACT, dictionaries=NS(get_dictionary=get_dictionary))
+    store = _store(tmp_path)
+
+    def context() -> object:
+        return make_context(
+            client,  # type: ignore[arg-type]
+            BillingBudget(limit=1),
+            ApprovalGate(mode=Mode.READ_ONLY, ask=lambda _: False, audit_log=tmp_path / "audit.jsonl"),
+            reports_dir=tmp_path / "reports",
+            store=store,
+        )
+
+    first = asyncio.run(context().dictionary("ProductGroup"))  # type: ignore[attr-defined]
+    second = asyncio.run(context().dictionary("ProductGroup"))  # type: ignore[attr-defined]
+    assert calls == ["ProductGroup"]
+    assert second[0].id == "1-CK237" and second[0].active is True
+    assert (second[0].model_extra or {})["type"] == "1-CK231" and first[0].name == "ДТ"
+    store.close()

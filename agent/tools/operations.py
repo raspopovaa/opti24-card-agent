@@ -361,7 +361,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                 limit_rows.append(
                     {
                         "id": item.id,
-                        "product": await product_label(item.productType),
+                        "product": await product_label(item.productType, getattr(item, "productGroup", None)),
                         "period": {"number": item.time.number, "type": item.time.type},
                         "amount": item.amount.model_dump() if item.amount else None,
                         "sum": item.sum.model_dump() if item.sum else None,

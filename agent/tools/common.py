@@ -57,7 +57,7 @@ def _error(exc: Exception) -> str:
                 payload["advice"] = advice
         if context.hint:
             payload["hint"] = context.hint[:300]
-        if not context.retryable:
+        if not context.transient:
             payload["retry"] = "Повтор того же запроса не поможет: не вызывай инструмент снова с теми же данными."
     if (code := getattr(exc, "processing_code", None)) is not None:
         payload["processing_code"] = code
@@ -95,8 +95,8 @@ def describe_card(card: Any) -> str:
     return ", ".join(parts)
 
 
-# Коды периода лимита, значение которых подтверждено; остальные показываются кодом.
-PERIOD_WORDS = {3: "сутки", 7: "неделя"}
+# Коды периода лимита по спецификации API 1.1.60 (time.type); остальные показываются кодом.
+PERIOD_WORDS = {2: "разовый", 3: "сутки", 4: "неделя", 5: "месяц", 6: "квартал", 7: "год"}
 
 
 def period_words(number: object, period_type: object) -> str:

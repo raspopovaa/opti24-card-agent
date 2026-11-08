@@ -12,12 +12,14 @@ from apisdkopti24.models.limits import (
     LimitAmountRequest,
     LimitRequestItem,
     LimitSumRequest,
+    LimitTermRequest,
     LimitTimeRequest,
     LimitTransactionsRequest,
 )
 from apisdkopti24.models.region_limits import RegionLimitRequestItem
 from apisdkopti24.models.restrictions import RestrictionRequestItem
 
+from .. import fuel_catalog
 from ..config import Mode
 from ..safety import BudgetExceededError
 from .common import MAX_LIST, _error, _json, describe_limit, limit_matches, period_words, verified
@@ -29,6 +31,34 @@ PAID_CHECK = verified(
     "Автоматически не сверено: проверка — get_access_rules (2 тарифицируемых запроса). "
     "Предложи пользователю, а не вызывай сам.",
 )
+
+
+async def fuel_args(
+    ctx: ToolContext, product_type: str | None, product_group: str | None
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Слово клиента («солярка», «92-й») → ID API по каталогу топлива.
+
+    Возвращает product_type, product_group, подпись продукта для плана и текст ошибки.
+    ID API (``1-…``) проходят как есть. Вид топлива сверяется с живым справочником
+    ProductGroup, если он доступен.
+    """
+    product_type = (product_type or "").strip() or None
+    product_group = (product_group or "").strip() or None
+    word = next((v for v in (product_group, product_type) if v and not fuel_catalog.is_api_id(v)), None)
+    if word is None:
+        kind = fuel_catalog.resolve(product_group) if product_group else None
+        label = kind.name if kind else (product_group or product_type)
+        return product_type, product_group, label, None
+    kind = fuel_catalog.resolve(word)
+    if kind is None:
+        names = ", ".join(k.name for k in fuel_catalog.FUELS if k.product_group)
+        return None, None, None, f"Не узнал продукт {word!r}. Виды топлива: {names}. Или ID из get_dictionary."
+    if kind.product_group is None:
+        return None, None, None, f"У «{kind.name}» нет ID в справочнике ProductGroup: лимит и ограничитель на него не поставить."
+    groups = {str(item.id) for item in await ctx.dictionary("ProductGroup")}
+    if groups and kind.product_group not in groups:
+        return None, None, None, f"«{kind.name}» ({kind.product_group}) нет в справочнике ProductGroup; уточни у администратора."
+    return fuel_catalog.FUEL_PRODUCT_TYPE, kind.product_group, kind.name, None
 
 
 def build(ctx: ToolContext) -> dict[str, Any]:
@@ -270,10 +300,14 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         """Установить или изменить продуктовый лимит. ИЗМЕНЯЕТ ДАННЫЕ, по тарифу.
 
         Одна цель (card_id или group_id), liters и/или rubles, период. period_type:
-        3 — сутки, 7 — неделя, другие коды — по get_limits. limit_id меняет лимит.
+        3 сутки, 4 неделя, 5 месяц, 7 год. limit_id меняет лимит.
+        product_group: вид топлива словом («ДТ», «92») или ID.
         """
         card_id = (card_id or "").strip() or None
         group_id = (group_id or "").strip() or None
+        product_type, product_group, product_name, problem = await fuel_args(ctx, product_type, product_group)
+        if problem:
+            return _json({"error": "bad_request", "message": problem})
         if bool(card_id) == bool(group_id):
             return _json(
                 {"error": "bad_request", "message": "Укажи ровно одну цель: card_id или group_id."}
@@ -282,7 +316,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             return _json(
                 {
                     "error": "bad_request",
-                    "message": "period_type: код 2–7; 3 — сутки, 7 — неделя. Уточни период.",
+                    "message": "period_type: код 2–7; 3 — сутки, 4 — неделя, 5 — месяц, 7 — год. Уточни период.",
                 }
             )
         if period_number < 1:
@@ -315,6 +349,8 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                     else None
                 ),
                 time=LimitTimeRequest(number=period_number, type=cast(Literal[2, 3, 4, 5, 6, 7], period_type)),
+                # Без term сервер отвечает 400 «Поле limit.0.term.type обязательно»; 1 — действует всегда.
+                term=LimitTermRequest(type=1),
                 transactions=(
                     LimitTransactionsRequest(count=transactions_count)
                     if transactions_count is not None
@@ -348,7 +384,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                 return _error(exc)
             new = (
                 f"{sizes} на {period_words(period_number, period_type)}, продукт "
-                f"{product_type or product_group or 'все продукты'}"
+                f"{product_name or 'все продукты'}"
                 + (f", не больше {transactions_count} операций" if transactions_count else "")
             )
             if limit_id:
@@ -462,12 +498,15 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         """Разрешить или запретить продукт. ИЗМЕНЯЕТ ДАННЫЕ, по тарифу.
 
         restriction_type: 1 — разрешающий, 2 — запрещающий. product_type — код
-        продукта из get_dictionary("ProductType"), например 1-CK231. Нужно
-        указать ровно одну цель (card_id или group_id).
+        продукта из get_dictionary("ProductType"), например 1-CK231; product_group:
+        топливо словом («ДТ») или ID. Цель: card_id или group_id.
         """
         card_id = (card_id or "").strip() or None
         group_id = (group_id or "").strip() or None
-        product_type = (product_type or "").strip()
+        resolved_type, product_group, product_name, problem = await fuel_args(ctx, product_type, product_group)
+        if problem:
+            return _json({"error": "bad_request", "message": problem})
+        product_type = resolved_type or ""
         if bool(card_id) == bool(group_id):
             return _json(
                 {"error": "bad_request", "message": "Укажи ровно одну цель: card_id или group_id."}
@@ -497,7 +536,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             "product_group": product_group, "restriction_type": restriction_type, "restriction_id": restriction_id,
         }
         summary, audit_target, problem = await rule_change_summary(
-            "restriction", restriction_id, card_id, group_id, f"{verb} продукт {product_type}"
+            "restriction", restriction_id, card_id, group_id, f"{verb} продукт {product_name or product_type}"
         )
         if problem:
             return problem

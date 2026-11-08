@@ -15,8 +15,10 @@ from typing import Any
 
 from apisdkopti24 import APIClient, APIError
 from apisdkopti24.errors import ProcessingRefusalError, RequestValidationError, ServerError
+from apisdkopti24.models.dictionaries import DictionaryItem
 from apisdkopti24.models.transactions import TransactionItemV2
 
+from .. import fuel_catalog
 from ..config import Mode
 from ..db import OperationStore, open_store
 from ..decline_codes import decode as decode_decline
@@ -205,18 +207,28 @@ def make_context(
         """data_source и data_as_of для ответа инструмента; пусто, если период не загружали."""
         return tx_source.get((date_from, date_to, card_id or None), {})
 
-    # Справочники API бесплатны: каждый загружается один раз за сессию. Код и ID записи → название.
+    # Справочники API бесплатны: в сессии загружаются один раз, в локальной базе хранятся сутки.
     dictionaries: dict[str, list[Any]] = {}
 
     async def dictionary(name: str) -> list[Any]:
         """Записи справочника; пустой список, если справочник недоступен (ответ без расшифровки)."""
-        if name not in dictionaries:
-            try:
-                data = (await client.dictionaries.get_dictionary(name=name)).data
-                dictionaries[name] = list((data.result if data else None) or [])
-            except Exception:  # noqa: BLE001 — справочник не критичен для ответа
-                dictionaries[name] = []
-        return dictionaries[name]
+        if name in dictionaries:
+            return dictionaries[name]
+        now = datetime.now().replace(microsecond=0)
+        saved_store = operation_store()
+        saved = saved_store.dictionary(name, now) if saved_store else None
+        if saved is not None:
+            dictionaries[name] = [DictionaryItem.model_validate(raw) for raw in saved]
+            return dictionaries[name]
+        try:
+            data = (await client.dictionaries.get_dictionary(name=name)).data
+            items = list((data.result if data else None) or [])
+        except Exception:  # noqa: BLE001 — справочник не критичен для ответа
+            items = []
+        dictionaries[name] = items
+        if saved_store and items and all(isinstance(item, DictionaryItem) for item in items):
+            saved_store.save_dictionary(name, [item.model_dump(mode="json") for item in items], now)
+        return items
 
     async def dictionary_label(name: str, code: object) -> str | None:
         """Название записи справочника по её ID или коду."""
@@ -228,8 +240,9 @@ def make_context(
                 return str(item.name or item.value or item.id)
         return None
 
-    async def product_label(code: str | None) -> str | None:
-        return await dictionary_label("ProductType", code)
+    async def product_label(code: str | None, group: str | None = None) -> str | None:
+        """Вид топлива из ProductGroup (1-CK237 — ДТ), иначе категория из ProductType (1-CK231 — Топливо)."""
+        return await dictionary_label("ProductGroup", group) or await dictionary_label("ProductType", code)
 
     async def goods_label(code: str) -> str | None:
         return await dictionary_label("Goods", code)
@@ -281,10 +294,14 @@ def make_context(
         needle = product.casefold()
         prices = station.prices or []
         offered = [(price, await goods_label(price.GoodsCode)) for price in prices]
-        match = next(
-            (price for price, label in offered if needle in (label or price.GoodsCode).casefold()),
-            None,
-        )
+        # Сначала каталог топлива: «солярка» → ДТ 00000000000006, и «дт» не попадёт в «ДТ Премиум».
+        kind = fuel_catalog.resolve(product)
+        match = next((price for price, _ in offered if kind and price.GoodsCode == kind.goods), None)
+        if match is None:
+            match = next(
+                (price for price, label in offered if needle in (label or price.GoodsCode).casefold()),
+                None,
+            )
         if match is None:
             return {
                 "allowed": None,
@@ -314,7 +331,7 @@ def make_context(
                     "id": item.id,
                     "card_id": item.card_id,
                     "group_id": item.group_id,
-                    "product": await product_label(item.productType),
+                    "product": await product_label(item.productType, item.productGroup),
                     "product_type": item.productType,
                     "product_group": item.productGroup,
                     "period": {"number": item.time.number, "type": item.time.type},

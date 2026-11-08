@@ -14,7 +14,7 @@ from typing import Any
 
 from anthropic import beta_async_tool
 
-from ..classifier import PARAM_TITLES, Topic, classify, load_matrix, load_sections
+from ..classifier import PARAM_TITLES, Classification, Topic, classify, load_matrix, load_sections
 from ..config import Mode
 from .catalog import CORE, WRITE_TOOLS
 from .common import _json
@@ -91,9 +91,12 @@ class ToolRouter:
     def _allowed(self, name: str) -> bool:
         return not (self._mode is Mode.READ_ONLY and name in WRITE_TOOLS)
 
-    def preload(self, question: str) -> set[str]:
-        """Открывает инструменты уверенно определённой темы вопроса; возвращает только вновь открытые."""
-        found = classify(question)
+    def preload(self, question: str, found: Classification | None = None) -> set[str]:
+        """Открывает инструменты уверенно определённой темы вопроса; возвращает только вновь открытые.
+
+        found — тема, уже определённая агентом (в том числе по смыслу); без неё — по ключевым словам.
+        """
+        found = found or classify(question)
         if not found.confident:
             return set()
         new = {name for name in found.tools if self._allowed(name)} - self.open_tools

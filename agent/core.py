@@ -22,6 +22,7 @@ from .db.store import contract_key_for
 from .prompt import SYSTEM_PROMPT, dated_question
 from .providers import get_provider
 from .safety import ApprovalGate, AskHuman, BillingBudget, count_tool_spend, operator_name
+from .semantic_topics import SemanticTopics, semantic_topics_from_env
 from .tools import build_tools
 from .tools.router import ToolRouter
 from .usage import UsageLedger
@@ -133,6 +134,8 @@ class FuelCardAgent:
     tools: list[Any] = field(init=False)
     tools_by_name: dict[str, Any] = field(init=False)
     router: ToolRouter | None = field(init=False, default=None)
+    # Тема по смыслу, когда ключевые слова не уверены (AGENT_SEMANTIC_TOPICS=1); None — выключено.
+    semantic: SemanticTopics | None = field(init=False, default=None)
     # Числа из данных сессии и итог проверки последнего ответа (для evals и тестов).
     evidence: Evidence = field(init=False)
     last_check: AnswerCheck = field(init=False, default_factory=AnswerCheck)
@@ -160,11 +163,12 @@ class FuelCardAgent:
         # из 27 схем дёшев (кеш) и проверен на evals, поэтому для него маршрутизатор не включается.
         if get_provider(self.settings.provider).kind == "openai" and self.settings.tool_routing != "off":
             self.router = ToolRouter(self.tools, self.settings.mode)
+        self.semantic = semantic_topics_from_env()
 
     async def ask(self, question: str) -> str:
         if self.llm is None:
             self.llm = make_llm(self.settings)
-        found = classify(question)
+        found = await self._classify(question)
         self.last_check = AnswerCheck()  # проверка прошлого вопроса не относится к этому
         ledger: UsageLedger | None = self.usage.ledger
         if ledger is not None:
@@ -183,6 +187,16 @@ class FuelCardAgent:
         finally:
             if ledger is not None:
                 ledger.end_turn(answer=answer, outcome=outcome, unverified_numbers=len(self.last_check.unverified))
+
+    async def _classify(self, question: str) -> Classification:
+        """Тема по ключевым словам, а если они не уверены и включён поиск по смыслу — по смыслу."""
+        found = classify(question)
+        if found.confident or self.semantic is None:
+            return found
+        try:
+            return await self.semantic.classify(question) or found
+        except Exception:  # noqa: BLE001  # модель эмбеддингов недоступна: остаётся обычный путь
+            return found
 
     async def _answer(self, question: str, found: Classification) -> tuple[str, str]:
         """Ответ на вопрос и его исход для учёта: answered, limit или empty."""
@@ -205,7 +219,7 @@ class FuelCardAgent:
             from .llm_openai import run_openai_loop
 
             if self.router is not None:
-                self.router.preload(question)
+                self.router.preload(question, found)
             final_text, called = await run_openai_loop(
                 self.llm,
                 self.settings.model,

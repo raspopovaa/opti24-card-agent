@@ -1,0 +1,37 @@
+{"q": "Сколько у нас бабок на счету?", "topics": ["balance"], "source": "paraphrases"}
+{"q": "Сколько ещё можем заправляться, пока деньги не кончатся?", "topics": ["balance"], "source": "paraphrases"}
+{"q": "У водителя по карте c1 не прошла оплата на заправке, что не так?", "topics": ["refusal"], "source": "paraphrases"}
+{"q": "Карта Петрова не проходит", "topics": ["refusal"], "source": "paraphrases"}
+{"q": "Во что нам обходится литр солярки в сентябре 2026?", "topics": ["fuel_price"], "source": "paraphrases"}
+{"q": "Почём нам обошёлся бензин в августе 2026?", "topics": ["fuel_price"], "source": "paraphrases"}
+{"q": "Кто у нас больше всех жжёт топлива в сентябре 2026?", "topics": ["spending"], "source": "paraphrases"}
+{"q": "Какая карта самая прожорливая за август 2026?", "topics": ["spending"], "source": "paraphrases"}
+{"q": "Где у нас топливо выходит дешевле всего за август 2026?", "topics": ["cheaper_region"], "source": "paraphrases"}
+{"q": "Не сливает ли кто-то топливо? Проверь сентябрь 2026", "topics": ["suspicious"], "source": "paraphrases"}
+{"q": "Чья это карта 7826010000000001?", "topics": ["card_profile"], "source": "paraphrases"}
+{"q": "Сколько ещё можно залить по карте c1 в этом месяце?", "topics": ["limits"], "source": "paraphrases"}
+{"q": "Можно ли ограничить карту c1 заправками только по будням?", "topics": ["change_rules"], "source": "paraphrases"}
+{"q": "Водитель уволился, отключи ему карту 7826010000000001", "topics": ["block_card"], "source": "paraphrases"}
+{"q": "Нужна выгрузка заправок за сентябрь 2026 для бухгалтерии", "topics": ["reports"], "source": "paraphrases"}
+{"q": "Пришли счета-фактуры за сентябрь 2026", "topics": ["documents"], "source": "paraphrases"}
+{"q": "Когда мы последний раз закидывали деньги на договор?", "topics": ["payments"], "source": "paraphrases"}
+{"q": "Нас не заблокируют за частые запросы?", "topics": ["api_quota"], "source": "paraphrases"}
+{"q": "Что значит статус Locked(Manager)?", "topics": ["dictionaries"], "source": "paraphrases"}
+{"q": "Как расторгнуть договор и забрать остаток денег?", "topics": ["contract_terms"], "source": "paraphrases"}
+{"q": "Скинь деньги с договора на карту водителя", "topics": ["money_transfer"], "source": "paraphrases"}
+{"q": "Сколько литров на сотню жрёт наш КАМАЗ?", "topics": ["fuel_consumption"], "source": "paraphrases"}
+{"q": "у меня спёрли карту из кабины", "topics": ["block_card"], "source": "colloquial"}
+{"q": "верните заблокированную карту в работу", "topics": ["block_card"], "source": "colloquial"}
+{"q": "почему на заправке пишут что денег не хватает", "topics": ["refusal"], "source": "colloquial"}
+{"q": "на чеке написано код 51, это что", "topics": ["refusal"], "source": "colloquial"}
+{"q": "почём нам на самом деле выходит литр с учётом скидки", "topics": ["fuel_price", "discount"], "source": "colloquial"}
+{"q": "можно ли по карте взять кофе и омывайку", "topics": ["contract_terms"], "source": "colloquial"}
+{"q": "АЗС взяла с нас лишнее, как оспорить", "topics": ["contract_terms"], "source": "colloquial"}
+{"q": "заправщик пробил не тот бензин", "topics": ["contract_terms"], "source": "colloquial"}
+{"q": "хотим закрыть договор и забрать остаток денег", "topics": ["contract_terms"], "source": "colloquial"}
+{"q": "куда вписать УИП в платёжке", "topics": ["contract_terms", "payments"], "source": "colloquial"}
+{"q": "когда нужно подписать и отдать акты за прошлый месяц", "topics": ["contract_terms", "documents"], "source": "colloquial"}
+{"q": "сколько стоит сделать новую карту вместо сломанной", "topics": ["contract_terms", "order_cards"], "source": "colloquial"}
+{"q": "водитель дал карту приятелю, так можно?", "topics": ["contract_terms"], "source": "colloquial"}
+{"q": "что будет если мы выберем все запросы к API в этом месяце", "topics": ["api_quota", "contract_terms"], "source": "colloquial"}
+{"q": "сколько процентов вы берёте за обслуживание с каждой заправки", "topics": ["contract_terms", "fuel_price"], "source": "colloquial"}

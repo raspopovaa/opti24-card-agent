@@ -21,8 +21,8 @@ from dataclasses import dataclass
 from .classifier import Classification, Topic, has_param, load_matrix
 from .rag.embeddings import Embedder, embedder_from_env
 
-MIN_SIMILARITY = 0.55
-MIN_MARGIN = 0.05
+MIN_SIMILARITY = 0.70  # замер на bge-m3, evals/topic_cases.jsonl: +4 верных подсказки, неверных не добавилось
+MIN_MARGIN = 0.08
 
 
 @dataclass(frozen=True, slots=True)

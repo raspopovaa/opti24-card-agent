@@ -52,6 +52,7 @@ _LINK_NOISE = (
     re.compile(r"\.(?:pdf|docx|xlsx|pptx)\s*$", re.IGNORECASE),
 )
 USER_AGENT = "opti24-card-agent knowledge sync/1.0"
+DOWNLOAD_SECONDS = 60
 
 Fetch = Callable[[str], tuple[int, str, bytes]]
 
@@ -97,11 +98,18 @@ class _Links(HTMLParser):
 
 
 def http_fetch(url: str) -> tuple[int, str, bytes]:
-    """Статус, тип содержимого и тело ответа; 0 — сайт не ответил."""
+    """Статус, тип содержимого и тело ответа; 0 — сайт не ответил или файл качался дольше минуты."""
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})  # noqa: S310
+    print(f"→ {url}", file=sys.stderr, flush=True)
     try:
         with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310  # nosec B310
-            return response.status, response.headers.get_content_type(), response.read(MAX_FILE_BYTES + 1)
+            # timeout ограничивает одно чтение; медленную отдачу по кускам ограничивает общий срок.
+            deadline, body = time.monotonic() + DOWNLOAD_SECONDS, bytearray()
+            while chunk := response.read(64 * 1024):
+                body += chunk
+                if len(body) > MAX_FILE_BYTES or time.monotonic() > deadline:
+                    raise TimeoutError(f"файл не скачался за {DOWNLOAD_SECONDS} с или больше 30 МБ")
+            return response.status, response.headers.get_content_type(), bytes(body)
     except urllib.error.HTTPError as exc:
         return exc.code, "", b""
     except (urllib.error.URLError, TimeoutError, OSError) as exc:

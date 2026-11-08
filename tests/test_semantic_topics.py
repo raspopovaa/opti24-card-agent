@@ -88,7 +88,7 @@ def test_thresholds_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AGENT_TOPIC_MIN_SIMILARITY", "0.7")
     monkeypatch.setenv("AGENT_TOPIC_MIN_MARGIN", "bad")
     semantic = SemanticTopics(FakeEmbedder({}))
-    assert semantic.min_similarity == 0.7 and semantic.min_margin == 0.05
+    assert semantic.min_similarity == 0.7 and semantic.min_margin == 0.08
 
 
 def test_off_by_default_and_on_with_flag(monkeypatch: pytest.MonkeyPatch) -> None:

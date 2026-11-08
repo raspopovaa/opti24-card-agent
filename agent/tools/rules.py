@@ -300,7 +300,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         """Установить или изменить продуктовый лимит. ИЗМЕНЯЕТ ДАННЫЕ, по тарифу.
 
         Одна цель (card_id или group_id), liters и/или rubles, период. period_type:
-        3 — сутки, 7 — неделя, другие коды — по get_limits. limit_id меняет лимит.
+        3 сутки, 4 неделя, 5 месяц, 7 год. limit_id меняет лимит.
         product_group: вид топлива словом («ДТ», «92») или ID.
         """
         card_id = (card_id or "").strip() or None
@@ -316,7 +316,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             return _json(
                 {
                     "error": "bad_request",
-                    "message": "period_type: код 2–7; 3 — сутки, 7 — неделя. Уточни период.",
+                    "message": "period_type: код 2–7; 3 — сутки, 4 — неделя, 5 — месяц, 7 — год. Уточни период.",
                 }
             )
         if period_number < 1:

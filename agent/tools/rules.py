@@ -300,7 +300,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         """Установить или изменить продуктовый лимит. ИЗМЕНЯЕТ ДАННЫЕ, по тарифу.
 
         Одна цель (card_id или group_id), liters и/или rubles, период. period_type:
-        3 сутки, 4 неделя, 5 месяц, 7 год. limit_id меняет лимит.
+        3 сутки, 4 неделя, 5 месяц, 7 год. limit_id меняет размер, не период.
         product_group: вид топлива словом («ДТ», «92») или ID.
         """
         card_id = (card_id or "").strip() or None
@@ -395,6 +395,21 @@ def build(ctx: ToolContext) -> dict[str, Any]:
                             "error": "not_found",
                             "message": f"Лимита {limit_id} нет у этой цели в get_limits: ничего не изменено. "
                             "Возьми limit_id из get_limits по той же карте или группе.",
+                        }
+                    )
+                old_time = getattr(old, "time", None)
+                old_period = (getattr(old_time, "number", None), getattr(old_time, "type", None))
+                if old_period != (period_number, period_type):
+                    # Оператор по limit_id меняет объём и сумму, а период молча оставляет прежним
+                    # (проверено на тестовом сервере 8 ноября 2026 года).
+                    return _json(
+                        {
+                            "error": "period_change_not_supported",
+                            "message": f"Лимит {limit_id} сейчас: {describe_limit(old)}. Оператор не меняет "
+                            "период существующего лимита: ответит «успешно», но период останется прежним. "
+                            "Ничего не изменено. Чтобы сменить период, предложи клиенту план из двух шагов: "
+                            "remove_limit этого limit_id, затем set_limit без limit_id с новым периодом. "
+                            "Между шагами карта или группа остаётся без этого лимита.",
                         }
                     )
                 summary = f"Изменить лимит: {whom}.\nБыло: {describe_limit(old)}.\nСтанет: {new}."

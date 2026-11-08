@@ -95,11 +95,11 @@ def test_server_error_is_unknown_but_client_error_is_not(tmp_path: Path) -> None
 def test_set_limit_shows_old_and_new_limit(tmp_path: Path) -> None:
     _, tools, asked = setup(tmp_path)
     out = call(
-        tools, "set_limit", {"card_id": "c1", "rubles": 5000, "period_number": 1, "period_type": 3, "limit_id": "l1"}
+        tools, "set_limit", {"card_id": "c1", "rubles": 5000, "period_number": 1, "period_type": 5, "limit_id": "l1"}
     )
     assert out["status"] == "saved"
     assert "Было: лимит l1: 9000.0 ₽ (израсходовано 231.46)" in asked[0]
-    assert "Станет: 5000 ₽ на сутки" in asked[0] and "карта 7826010000000001" in asked[0]
+    assert "Станет: 5000 ₽ на месяц" in asked[0] and "карта 7826010000000001" in asked[0]
 
 
 def test_set_limit_with_unknown_limit_id_is_refused_without_asking(tmp_path: Path) -> None:
@@ -196,3 +196,22 @@ def test_remove_limit_is_rechecked_and_rules_say_not_checked(tmp_path: Path) -> 
     fake.limits.get_limits = empty
     out = call(tools, "set_region_limit", {"card_id": "c1", "region": "SPE", "limit_type": 2})
     assert out["verified"]["status"] == "not_checked" and "get_access_rules" in out["verified"]["message"]
+
+
+def test_set_limit_refuses_period_change_by_limit_id(tmp_path: Path) -> None:
+    # Оператор по limit_id меняет размер, а период молча оставляет прежним: агент не должен
+    # отправлять такое изменение и обещать новый период.
+    fake, tools, asked = setup(tmp_path)
+    sent: list[object] = []
+
+    async def spy(**kwargs: object) -> object:
+        sent.append(kwargs)
+        raise AssertionError("set_limit не должен вызываться")
+
+    fake.limits.set_limit = spy
+    out = call(
+        tools, "set_limit", {"card_id": "c1", "rubles": 5000, "period_number": 1, "period_type": 4, "limit_id": "l1"}
+    )
+    assert out["error"] == "period_change_not_supported"
+    assert "remove_limit" in out["message"] and "лимит l1" in out["message"]
+    assert not asked and not sent

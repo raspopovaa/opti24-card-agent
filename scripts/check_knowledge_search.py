@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT))
 
 from agent.knowledge import Section, load_sections, rank, search  # noqa: E402
 from agent.rag import KnowledgeIndex, assess, embedder_from_env, index_path  # noqa: E402
-from agent.rag.index import MIN_SIMILARITY  # noqa: E402
+from agent.rag.index import MIN_SIMILARITY, WEB_MIN_SIMILARITY  # noqa: E402
 
 CASE_FILES = ("retrieval_cases.jsonl", "colloquial_cases.jsonl")
 METHODS = ("слова", "смысл", "rrf", "векторы первыми")
@@ -53,7 +53,7 @@ async def main() -> int:
     hits = dict.fromkeys(METHODS, 0)
     silent = dict.fromkeys(METHODS, 0)
     # Для таблицы порога: разделы по косинусу, первый раздел по словам и что считается верным.
-    scored_cases: list[tuple[list[tuple[float, str]], str | None, set[object] | None]] = []
+    scored_cases: list[tuple[list[tuple[float, str, bool]], str | None, set[object] | None]] = []
     # Для таблицы уточнений: сходства с разделами, первый раздел по словам, верен ли ответ.
     doubt_cases: list[tuple[Scored, Section | None, bool]] = []
 
@@ -64,7 +64,9 @@ async def main() -> int:
         found = await search_all(index, sections, question)
         scored = await index.similarities(question) or []
         word_top = found["слова"][0]["section"] if found["слова"] else None
-        scored_cases.append(([(sim, sec.heading) for sim, sec in scored], word_top, accepted if expected else None))
+        scored_cases.append(
+            ([(sim, sec.heading, sec.web) for sim, sec in scored], word_top, accepted if expected else None)
+        )
         if expected:
             first = found["векторы первыми"]
             ranked_words = rank(sections, question)
@@ -102,14 +104,17 @@ async def search_all(index: KnowledgeIndex, sections: list[Section], question: s
 
 
 def print_thresholds(
-    scored_cases: list[tuple[list[tuple[float, str]], str | None, set[object] | None]], known: int, unknown: int
+    scored_cases: list[tuple[list[tuple[float, str, bool]], str | None, set[object] | None]], known: int, unknown: int
 ) -> None:
     """Сколько верных ответов и молчаний не по теме дал бы каждый порог из THRESHOLDS."""
     print("\nПорог сходства для «векторы первыми» (сейчас AGENT_RAG_MIN_SIMILARITY или 0.52):")
     for threshold in THRESHOLDS:
         right = quiet = 0
         for scored, word_top, accepted in scored_cases:
-            above = [heading for sim, heading in scored if sim >= threshold]
+            # Страницы сайта — как в поиске: свой порог не ниже общего и после выжимок.
+            above = [heading for sim, heading, web in scored if not web and sim >= threshold]
+            web_threshold = max(threshold, WEB_MIN_SIMILARITY)
+            above += [heading for sim, heading, web in scored if web and sim >= web_threshold]
             top = above[0] if above else word_top
             if accepted is None:
                 quiet += top is None

@@ -30,6 +30,21 @@ DICTIONARIES: dict[str, str] = {
 }
 
 
+def active_rows(items: list[Any]) -> list[dict[str, str]]:
+    """Действующие записи без повторов кода.
+
+    Сервер не присылает deleted; актуальность записи показывает active. В CardStatus один код
+    встречается дважды: старая запись с active=false и новая с active=true.
+    """
+    rows: dict[str, dict[str, str]] = {}
+    for item in items:
+        if getattr(item, "active", None) is False:
+            continue
+        code = str(getattr(item, "code", None) or item.id)
+        rows.setdefault(code, {"code": code, "name": str(item.name or item.value or item.id)})
+    return list(rows.values())
+
+
 def build(ctx: ToolContext) -> dict[str, Any]:
     """Инструменты темы по имени; порядок в списке агента задаёт agent/tools/__init__.py."""
     dictionary = ctx.dictionary
@@ -52,11 +67,7 @@ def build(ctx: ToolContext) -> dict[str, Any]:
         if key is None:
             return _json({"error": "unknown_dictionary", "message": f"Нет справочника {name!r}.", "names": list(DICTIONARIES)})
         items = await dictionary(key)
-        rows = [
-            {"code": str(getattr(item, "code", None) or item.id), "name": item.name or item.value or str(item.id)}
-            for item in items
-            if not getattr(item, "deleted", 0)
-        ]
+        rows = active_rows(items)
         if query:
             needle = query.strip().casefold()
             rows = [row for row in rows if needle in row["code"].casefold() or needle in row["name"].casefold()]

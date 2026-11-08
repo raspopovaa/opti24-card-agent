@@ -135,6 +135,21 @@
       ],
       "sha256": null,
       "accepted": null
+    },
+    {
+      "id": "api-dictionaries",
+      "title": "Справочники API ОПТИ 24 (get_dictionary, фильтры и список АЗС)",
+      "url": null,
+      "site_section": "SDK apisdkopti24: страница «Справочники» и скрипт выгрузки справочников",
+      "files": [
+        "dict-*.json"
+      ],
+      "topics": [
+        "dictionaries.md"
+      ],
+      "note": "Не документ сайта: выгрузка ответов API. Обновлять при изменении справочников; файлов во входящих обычно нет.",
+      "sha256": null,
+      "accepted": "2026-11-08"
     }
   ]
 }

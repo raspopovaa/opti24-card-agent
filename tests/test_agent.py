@@ -1382,3 +1382,52 @@ def test_contract_summary_gives_previous_month_volume_and_fee_rate(tmp_path: Pat
     # 120 000 л за прошлый месяц — ступень 100 001–150 000 л таблицы 3: 2,5 %.
     assert out["prev_month_liters"] == "120000" and out["service_fee_percent_typical"] == "2.5"
     assert "Приложение № 1" in out["service_fee_terms"]
+
+
+def test_set_limit_resolves_fuel_word_and_sends_term(tmp_path: Path) -> None:
+    fake, _, tools = make_tools(Mode.CONFIRM, answer=True, tmp=tmp_path)
+
+    async def get_dictionary(*, name: str, **_: object) -> NS:
+        items = [NS(id="1-CK237", code="FUELDT", name="ДТ", value=None)] if name == "ProductGroup" else []
+        return NS(data=NS(result=items, total_count=len(items)))
+
+    fake.dictionaries.get_dictionary = get_dictionary
+    args = {"card_id": "c1", "product_group": "солярка", "liters": 500, "period_number": 1, "period_type": 3}
+    out = json.loads(asyncio.run(tools["set_limit"].call(args)))
+    assert out["status"] == "saved"
+    item = fake.saved_limits[0]
+    assert (item.product_type, item.product_group) == ("1-CK231", "1-CK237")
+    assert item.term is not None and item.term.type == 1
+
+
+def test_set_limit_rejects_unknown_fuel_word(tmp_path: Path) -> None:
+    fake, budget, tools = make_tools(Mode.CONFIRM, answer=True, tmp=tmp_path)
+    args = {"card_id": "c1", "product_group": "газ", "liters": 50, "period_number": 1, "period_type": 3}
+    out = json.loads(asyncio.run(tools["set_limit"].call(args)))
+    assert out["error"] == "bad_request" and "газ" in out["message"]
+    assert fake.saved_limits == [] and budget.spent == 0
+
+
+def test_diagnose_matches_fuel_word_through_catalog(tmp_path: Path) -> None:
+    fake, _, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path, budget_limit=10)
+
+    async def get_azs_list_v1(*, id: str, **_: object) -> NS:
+        prices = [NS(GoodsCode="00000000000056", Price="70.00"), NS(GoodsCode="00000000000006", Price="65.50")]
+        return NS(data=NS(result=[NS(regionCode="MOS", prices=prices)], total_count=1))
+
+    async def get_dictionary(*, name: str, **_: object) -> NS:
+        items = [NS(id="00000000000056", code=None, name="ДТ Премиум", value=None),
+                 NS(id="00000000000006", code=None, name="ДТ", value=None)]
+        return NS(data=NS(result=items, total_count=2))
+
+    purchases: list[dict[str, object]] = []
+
+    async def check_purchase(**kwargs: object) -> NS:
+        purchases.append(kwargs)
+        return NS(data=True)
+
+    fake.dictionaries = NS(get_azs_list_v1=get_azs_list_v1, get_dictionary=get_dictionary)
+    fake.final_prices = NS(check_purchase=check_purchase)
+    args = {"card_id": "c1", "poi_id": "azs-1", "product": "солярка", "liters": 40}
+    asyncio.run(tools["diagnose_fueling"].call(args))
+    assert purchases[0]["goods"] == [{"code": "00000000000006", "quantity": 40.0, "price": 65.5}]

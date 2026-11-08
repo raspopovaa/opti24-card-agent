@@ -24,6 +24,8 @@ from typing import Any
 # Сторно и корректировки приходят в течение нескольких дней после операции.
 SETTLE_DAYS = 3
 DEFAULT_TTL = timedelta(hours=1)
+# Справочники API бесплатны и меняются редко: копия годится сутки.
+DICTIONARY_TTL = timedelta(hours=24)
 DEFAULT_PATH = Path("data/agent.db")
 
 _SCHEMA = """
@@ -44,6 +46,13 @@ CREATE TABLE IF NOT EXISTS loaded_periods (
     card_id TEXT NOT NULL,
     loaded_at TEXT NOT NULL,
     PRIMARY KEY (contract_key, date_from, date_to, card_id)
+);
+CREATE TABLE IF NOT EXISTS dictionaries (
+    contract_key TEXT NOT NULL,
+    name TEXT NOT NULL,
+    raw TEXT NOT NULL,
+    loaded_at TEXT NOT NULL,
+    PRIMARY KEY (contract_key, name)
 );
 """
 _ALL_CARDS = ""  # card_id в loaded_periods: пустая строка — загружены все карты
@@ -124,6 +133,24 @@ class OperationStore:
             self._db.execute(
                 "INSERT OR REPLACE INTO loaded_periods VALUES (?, ?, ?, ?, ?)",
                 (self._key, date_from.isoformat(), date_to.isoformat(), card_id or _ALL_CARDS, stamp),
+            )
+
+    def dictionary(self, name: str, now: datetime) -> list[dict[str, Any]] | None:
+        """Записи справочника, если копия моложе DICTIONARY_TTL; иначе None."""
+        row = self._db.execute(
+            "SELECT raw, loaded_at FROM dictionaries WHERE contract_key = ? AND name = ?", (self._key, name)
+        ).fetchone()
+        if row is None or now - datetime.fromisoformat(row[1]) >= DICTIONARY_TTL:
+            return None
+        items = json.loads(row[0])
+        return items if isinstance(items, list) else None
+
+    def save_dictionary(self, name: str, items: list[dict[str, Any]], now: datetime) -> None:
+        """Записать справочник целиком (ответ API как есть)."""
+        with self._db:
+            self._db.execute(
+                "INSERT OR REPLACE INTO dictionaries VALUES (?, ?, ?, ?)",
+                (self._key, name, json.dumps(items, ensure_ascii=False), now.isoformat(timespec="seconds")),
             )
 
     def _loaded_at(self, date_from: date, date_to: date, card_id: str | None) -> datetime | None:

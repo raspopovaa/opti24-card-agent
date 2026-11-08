@@ -95,8 +95,8 @@ def describe_card(card: Any) -> str:
     return ", ".join(parts)
 
 
-# Коды периода лимита, значение которых подтверждено; остальные показываются кодом.
-PERIOD_WORDS = {3: "сутки", 7: "неделя"}
+# Коды периода лимита по спецификации API 1.1.60 (time.type); остальные показываются кодом.
+PERIOD_WORDS = {2: "разовый", 3: "сутки", 4: "неделя", 5: "месяц", 6: "квартал", 7: "год"}
 
 
 def period_words(number: object, period_type: object) -> str:

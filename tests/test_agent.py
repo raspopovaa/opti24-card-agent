@@ -1431,3 +1431,11 @@ def test_diagnose_matches_fuel_word_through_catalog(tmp_path: Path) -> None:
     args = {"card_id": "c1", "poi_id": "azs-1", "product": "солярка", "liters": 40}
     asyncio.run(tools["diagnose_fueling"].call(args))
     assert purchases[0]["goods"] == [{"code": "00000000000006", "quantity": 40.0, "price": 65.5}]
+
+
+def test_limit_period_codes_follow_spec() -> None:
+    from agent.tools.common import period_words
+
+    assert period_words(1, 4) == "неделя"
+    assert period_words(1, 7) == "год"
+    assert period_words(2, 5) == "2 × месяц"

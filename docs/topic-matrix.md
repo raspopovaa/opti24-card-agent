@@ -311,7 +311,7 @@
 - `get_limits` → `data.result.amount.used` — Использованное значение лимита
 - `get_limits` → `data.result.sum.value` — Сумма лимита
 - `get_limits` → `data.result.sum.used` — Использованный объём лимита
-- `get_limits` → `data.result.time.type` — Тип периода: 2 разовый, 3 сутки, 4 неделя, 5 месяц, 6 квартал, 7 год
+- `get_limits` → `data.result.time.type` — Тип периода (например, 7: неделя)
 - `get_region_limits` → `data.result.region` — Код регион обслуживания
 - `get_region_limits` → `data.result.limit_type` — Тип лимита
 - `get_restrictions` → `data.result.productTypeName` — Название типа продукта

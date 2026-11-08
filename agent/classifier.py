@@ -128,6 +128,7 @@ class Classification:
     missing: tuple[Param, ...] = field(default=())  # обязательные параметры главной темы, которых нет
     # Уверенно ли определена тема: только тогда даётся подсказка и заранее открываются инструменты.
     confident: bool = False
+    source: str = "keywords"  # keywords — по ключевым словам, semantic — по смыслу (agent/semantic_topics.py)
 
     @property
     def primary(self) -> Topic | None:

@@ -26,6 +26,10 @@ from .embeddings import Embedder, cosine
 
 DEFAULT_PATH = Path("data/knowledge.db")
 MIN_SIMILARITY = 0.52  # bge-m3: 0.50–0.55 — 35/40 верно и 5/5 «не по теме» без ответа
+# Страницы и файлы сайта (scripts/fetch_site.py) — нижний уровень: отвечают после выжимок договора и
+# загруженных документов компании, и по смыслу им нужен порог выше: короткие фрагменты (адрес, телефон)
+# похожи на что угодно. На bge-m3 сайт без этого опустил верные ответы с 35 до 31 из 40.
+WEB_MIN_SIMILARITY = 0.60
 _RRF_K = 60
 # Признаки неуверенного ответа: агент переспрашивает клиента вместо ответа.
 CLOSE_GAP = 0.03  # первый и второй раздел почти равны по сходству
@@ -56,6 +60,8 @@ class KnowledgeIndex:
         setting = os.environ.get("AGENT_RAG_MIN_SIMILARITY", "").strip()
         default = float(setting) if setting else MIN_SIMILARITY
         self._min_similarity = default if min_similarity is None else min_similarity
+        web_setting = os.environ.get("AGENT_RAG_WEB_MIN_SIMILARITY", "").strip()
+        self._web_min_similarity = max(float(web_setting) if web_setting else WEB_MIN_SIMILARITY, self._min_similarity)
         self._vectors: list[list[float]] | None = None
         # Последний вопрос и его сходства: search и answer не считают вектор вопроса дважды.
         self._last: tuple[str, list[tuple[float, Section]]] | None = None
@@ -69,14 +75,14 @@ class KnowledgeIndex:
         первыми ("vectors_first") 35, слияние рангов с равным весом ("rrf") 33. Второй
         способ оставлен для сравнения моделей.
         """
-        by_words = [section for _, section in rank(self._sections, query)]
+        by_words = _web_last([section for _, section in rank(self._sections, query)])
         by_meaning = await self._by_meaning(query)
         if by_meaning is None:
             return [as_result(section) for section in by_words[:top]], "words"
         if fusion == "vectors_first":
             found = list(by_meaning)
             found += [section for section in by_words if section not in found]
-            return [as_result(section) for section in found[:top]], "hybrid"
+            return [as_result(section) for section in _web_last(found)[:top]], "hybrid"
 
         scores: dict[int, float] = {}
         for ranked in (by_words, by_meaning):
@@ -130,7 +136,10 @@ class KnowledgeIndex:
         scored = await self.similarities(query)
         if scored is None:
             return None
-        return [section for similarity, section in scored if similarity >= self._min_similarity]
+        return [
+            section for similarity, section in scored
+            if similarity >= (self._web_min_similarity if section.web else self._min_similarity)
+        ]
 
     async def _section_vectors(self, embedder: Embedder) -> list[list[float]]:
         if self._vectors is not None:
@@ -154,6 +163,11 @@ class KnowledgeIndex:
             db.close()
         self._vectors = [known[text_hash] for text_hash in hashes]
         return self._vectors
+
+
+def _web_last(sections: list[Section]) -> list[Section]:
+    """Страницы сайта после выжимок договора и документов компании; порядок внутри уровня сохраняется."""
+    return [s for s in sections if not s.web] + [s for s in sections if s.web]
 
 
 def assess(

@@ -50,20 +50,25 @@ def count_tool_spend() -> Iterator[list[int]]:
 
 @dataclass(slots=True)
 class BillingBudget:
-    """Сколько тарифицируемых вызовов Opti24 агент ещё может сделать в этой сессии."""
+    """Считает тарифицируемые вызовы Opti24 в сессии; предел необязателен.
 
-    limit: int
+    По умолчанию предела нет (``limit=None``). Он появляется только в двух случаях: его задали явно
+    (``AGENT_MAX_BILLABLE_CALLS``) или API сообщил остаток месячного пакета: тогда агент не тратит
+    больше остатка, чтобы не заблокировать договор для всех интеграций до конца месяца.
+    """
+
+    limit: int | None = None
     spent: int = 0
 
     @property
-    def left(self) -> int:
-        """Сколько тарифицируемых вызовов ещё можно сделать."""
-        return max(0, self.limit - self.spent)
+    def left(self) -> int | None:
+        """Сколько тарифицируемых вызовов ещё можно сделать; None — предела нет."""
+        return None if self.limit is None else max(0, self.limit - self.spent)
 
     def spend(self, calls: int = 1) -> None:
-        if self.spent + calls > self.limit:
+        if self.limit is not None and self.spent + calls > self.limit:
             raise BudgetExceededError(
-                f"Исчерпан бюджет тарифицируемых запросов на сессию ({self.limit}). "
+                f"Исчерпан предел тарифицируемых запросов ({self.limit}). "
                 "Сообщи пользователю и предложи продолжить в новой сессии."
             )
         self.spent += calls

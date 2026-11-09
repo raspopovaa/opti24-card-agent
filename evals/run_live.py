@@ -143,7 +143,8 @@ async def main(month: str, max_billable: int, runs: int, cases_file: Path | None
                     print(f"\nОстановлено: потрачено {spent} тарифицируемых запросов (предел {max_billable}).")
                     return failed_cases + 1
                 agent = FuelCardAgent(settings=settings, opti24=opti24, ask_human=_never, interface="eval")
-                agent.budget.limit = min(agent.budget.limit, max_billable - spent)  # предел на весь прогон
+                remaining = max_billable - spent  # предел на весь прогон
+                agent.budget.limit = remaining if agent.budget.limit is None else min(agent.budget.limit, remaining)
                 trace = _trace(agent)
                 answer = ""
                 for question in questions(case):

@@ -26,6 +26,13 @@ def _int_env(name: str, default: int) -> int:
         raise ValueError(f"Переменная {name} должна быть целым числом, а не {raw[:30]!r}") from None
 
 
+def _optional_int_env(name: str) -> int | None:
+    """Целое из переменной или None, если она не задана, пуста или равна 0."""
+    if not os.environ.get(name, "").strip():
+        return None
+    return _int_env(name, 0) or None
+
+
 def _choice_env(name: str, default: str, allowed: set[str]) -> str:
     value = os.environ.get(name, default).strip().lower()
     if value not in allowed:
@@ -55,7 +62,7 @@ class Settings:
     effort: str
     mode: Mode
     max_iterations: int
-    max_billable_calls: int
+    max_billable_calls: int | None  # None — без предела на сессию
     opti24_env_file: Path
     audit_log: Path
     project: str = ""  # ID каталога Yandex Cloud; для остальных провайдеров пусто
@@ -85,8 +92,8 @@ class Settings:
             mode=Mode(os.environ.get("AGENT_MODE", Mode.READ_ONLY)),
             # Предохранитель от зацикливания: столько обращений к модели за один вопрос.
             max_iterations=_int_env("AGENT_MAX_ITERATIONS", 8),
-            # Предохранитель для пакета Opti24: тарифицируемых вызовов API за сессию.
-            max_billable_calls=_int_env("AGENT_MAX_BILLABLE_CALLS", 10),
+            # Предел тарифицируемых вызовов за сессию: по умолчанию нет, 0 тоже значит «без предела».
+            max_billable_calls=_optional_int_env("AGENT_MAX_BILLABLE_CALLS"),
             opti24_env_file=Path(
                 os.environ.get("OPTI24_ENV_FILE") or default_env_file("demo")
             ).expanduser(),

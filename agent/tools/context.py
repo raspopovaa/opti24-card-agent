@@ -131,14 +131,15 @@ def make_context(
     knowledge = KnowledgeIndex(load_sections(), embedder_from_env(), index_path())
 
     def quota_payload(info: Any) -> dict[str, object]:
-        """Расход месячного пакета; при известном размере бюджет сессии не больше остатка."""
+        """Расход месячного пакета; при известном размере предел сессии не больше остатка."""
         package = info.client_info.Queries
         quota = int(package) if package else monthly_quota
         used = int(info.methods.all or 0)
         left = max(quota - used, 0)
         enforced = bool(package) or quota_configured
         if enforced:
-            budget.limit = min(budget.limit, budget.spent + left)
+            cap = budget.spent + left  # остаток месячного пакета: договор нельзя довести до блокировки
+            budget.limit = cap if budget.limit is None else min(budget.limit, cap)
         payload: dict[str, object] = {
             "monthly_quota": quota,
             "quota_source": "API" if package else (
@@ -363,11 +364,11 @@ def make_context(
                     "Так и скажи пользователю; включить изменение можно запуском с AGENT_MODE=confirm.",
                 }
             )
-        if budget.left < 1:  # не спрашиваем человека о том, что выполнить уже нельзя
+        if budget.left is not None and budget.left < 1:  # не спрашиваем человека о том, что выполнить уже нельзя
             return None, _json(
                 {
                     "error": "BudgetExceededError",
-                    "message": f"Исчерпан бюджет тарифицируемых запросов на сессию ({budget.limit}): "
+                    "message": f"Исчерпан предел тарифицируемых запросов ({budget.limit}): "
                     "изменение не выполнено. Предложи продолжить в новой сессии.",
                 }
             )

@@ -85,6 +85,12 @@ def test_budget_blocks_overspend() -> None:
         budget.spend()
 
 
+def test_budget_has_no_limit_by_default() -> None:
+    budget = BillingBudget()
+    budget.spend(1000)
+    assert budget.spent == 1000 and budget.limit is None and budget.left is None
+
+
 class FakeOpti24:
     def __init__(self, transactions: list[NS]) -> None:
         self.blocked: list[str] = []
@@ -1365,6 +1371,24 @@ def test_non_numeric_limit_gives_a_clear_error(monkeypatch: pytest.MonkeyPatch) 
         Settings.from_env()
     monkeypatch.setenv("AGENT_MAX_BILLABLE_CALLS", "6")
     assert Settings.from_env().max_billable_calls == 6
+    monkeypatch.setenv("AGENT_MAX_BILLABLE_CALLS", "0")
+    assert Settings.from_env().max_billable_calls is None
+
+
+def test_session_has_no_limit_unless_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent.config import Settings
+
+    monkeypatch.delenv("AGENT_MAX_BILLABLE_CALLS", raising=False)
+    assert Settings.from_env().max_billable_calls is None
+
+
+def test_quota_remainder_caps_a_session_without_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPTI24_MONTHLY_QUOTA", "500")
+    fake, budget, tools = make_tools(Mode.READ_ONLY, answer=False, tmp=tmp_path)
+    budget.limit = None
+    _usage(fake, None, 497)
+    out = json.loads(asyncio.run(tools["get_api_usage"].call({})))
+    assert budget.limit == 3 and out["agent_billable_limit"] == 3
 
 
 def test_account_context_separates_agent_mode_from_account_rights(tmp_path: Path) -> None:

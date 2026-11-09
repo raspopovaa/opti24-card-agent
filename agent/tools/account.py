@@ -250,14 +250,14 @@ def build(ctx: ToolContext) -> dict[str, Any]:
             info = (await client.auth.get_info()).data
         except APIError as exc:
             return _error(exc)
-        return _json(
-            {
-                "period": {"from": _iso(info.from_), "to": _iso(info.to)},
-                **quota_payload(info),
-                "agent_billable_calls_this_session": budget.spent,
-                "agent_billable_limit": budget.limit,
-            }
-        )
+        payload = {
+            "period": {"from": _iso(info.from_), "to": _iso(info.to)},
+            **quota_payload(info),
+            "agent_billable_calls_this_session": budget.spent,
+        }
+        if budget.limit is not None:  # предела нет, пока его не задали или API не назвал остаток пакета
+            payload["agent_billable_limit"] = budget.limit
+        return _json(payload)
 
     return {
         "get_account_context": get_account_context,
